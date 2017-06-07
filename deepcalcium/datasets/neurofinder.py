@@ -41,6 +41,8 @@ alias_to_URL = {
     '04.01.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.04.01.test.zip'
 }
 
+neurofinder_aliases = sorted(list(alias_to_URL.keys()))
+
 
 def load_neurofinder(dataset_aliases, datasets_dir='/home/kzh/.deep-calcium-datasets'):
 
@@ -141,4 +143,7 @@ def load_neurofinder(dataset_aliases, datasets_dir='/home/kzh/.deep-calcium-data
         # Store the read-only mask.
         M.append(h5py.File(path_m, 'r'))
 
-    return S, M
+    if len(dataset_aliases) == 1:
+        return S[0], M[0]
+    else:
+        return S, M
