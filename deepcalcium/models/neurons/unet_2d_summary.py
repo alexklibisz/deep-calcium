@@ -13,21 +13,18 @@ class UNet2DSummary(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(S, M, weights_path, window_shape, nb_epochs, batch_size, keras_callbacks,
-            sample_frames_min, sample_frames_max, val_proportion, val_random_average):
+    def fit(self, S, M, weights_path=None, window_shape=(96, 96), nb_epochs=20, batch_size=60, keras_callbacks=[],
+            sample_frames_min=500, sample_frames_max=2500, val_proportion=0.25, val_random_mean=False):
 
         print('TODO: fit')
-        pass
         return
 
-    def evaluate(S, M, weights_path, window_shape, batch_size):
+    def evaluate(self, S, M, weights_path, window_shape, batch_size, random_mean=False):
 
         print('TODO: evaluate')
-        pass
         return
 
-    def predict(S, M, weights_path, window_shape, batch_size):
+    def predict(self, S, weights_path, window_shape, batch_size, save_to_checkpoint_dir):
 
         print('TODO: predict')
-        pass
         return

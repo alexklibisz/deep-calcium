@@ -13,11 +13,11 @@ np.random.seed(865)
 logging.basicConfig(level=logging.INFO)
 
 
-def training(dataset_alias, weights_path):
+def training(dataset_name, weights_path):
     '''Train on all neurofinder datasets.'''
 
     # Load all sequences and masks as hdf5 File objects.
-    S_trn, M_trn = load_neurofinder(dataset_alias)
+    S_trn, M_trn = load_neurofinder(dataset_name)
 
     # Setup model.
     model = UNet2DSummary(
@@ -37,7 +37,7 @@ def training(dataset_alias, weights_path):
         sample_frames_min=500,      # Number of frames to read for each training sample.
         sample_frames_max=1500,
         val_proportion=0.25,        # Proportion of each sequence for validation.
-        val_random_mean=True,       # Average validation mask over random summaries.
+        val_random_mean=True        # Average validation mask over random summaries.
     )
 
     # Evaluate training data performance using neurofinder metrics.
@@ -50,20 +50,30 @@ def training(dataset_alias, weights_path):
     )
 
 
-def prediction(dataset_alias, weights_path):
+def prediction(dataset_name, weights_path):
     '''Predictions on all neurofinder datasets.'''
 
     # Load all sequences and masks as hdf5 File objects.
-    S, _ = load_neurofinder(dataset_alias)
+    S, _ = load_neurofinder(dataset_name)
 
-    # Prediction.
-    model.predict(
+    model = UNet2DSummary(
+        checkpoint_dir='checkpoints/unet_2d_summary',
+        summary_func=lambda s: np.mean(s, axis=0),
+        random_state=np.random
+    )
+
+    # Prediction. Saves predictions to checkpoint directory and returns them
+    # as numpy arrays.
+    M_prd = model.predict(
         S_tst,                       # hdf5 sequences (no masks).
         weights_path=weights_path,   # Pre-trained weights.
         window_shape=(512, 512),     # Input/output windows to the network.
         batch_size=10,
-        random_mean=True
+        random_mean=True,
+        save_to_checkpoint_dir=True
     )
+
+    # Make a submission from the predicted masks.
 
 
 if __name__ == "__main__":
@@ -74,13 +84,13 @@ if __name__ == "__main__":
     # Training cli.
     sp_trn = sp.add_parser('train', help='CLI for training.')
     sp_trn.set_defaults(which='train')
-    sp_trn.add_argument('dataset', help='dataset alias', default='all_train', type=str)
+    sp_trn.add_argument('dataset', help='dataset name', default='all_train', type=str)
     sp_trn.add_argument('-w', '--weights', help='path to weights', type=str)
 
     # Prediction cli.
     sp_prd = sp.add_parser('predict', help='CLI for prediction.')
     sp_prd.set_defaults(which='predict')
-    sp_prd.add_argument('dataset', help='dataset alias', default='all', type=str)
+    sp_prd.add_argument('dataset', help='dataset name', default='all', type=str)
     sp_prd.add_argument('-w', '--weights', help='path to weights',
                         type=str, required=True)
 

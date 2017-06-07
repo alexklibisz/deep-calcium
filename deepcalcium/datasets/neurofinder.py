@@ -10,63 +10,45 @@ import numpy as np
 
 from deepcalcium.utils.runtime import funcname
 
-alias_to_URL = {
-    '00.00': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.00.zip',
-    '00.01': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.01.zip',
-    '00.02': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.02.zip',
-    '00.03': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.03.zip',
-    '00.04': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.04.zip',
-    '00.05': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.05.zip',
-    '00.06': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.06.zip',
-    '00.07': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.07.zip',
-    '00.08': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.08.zip',
-    '00.09': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.09.zip',
-    '00.10': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.10.zip',
-    '00.11': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.11.zip',
-    '01.00': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.01.00.zip',
-    '01.01': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.01.01.zip',
-    '02.00': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.02.00.zip',
-    '02.01': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.02.01.zip',
-    '03.00': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.03.00.zip',
-    '04.00': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.04.00.zip',
-    '04.01': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.04.01.zip',
-    '00.00.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.00.test.zip',
-    '00.01.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.00.01.test.zip',
-    '01.00.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.01.00.test.zip',
-    '01.01.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.01.01.test.zip',
-    '02.00.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.02.00.test.zip',
-    '02.01.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.02.01.test.zip',
-    '03.00.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.03.00.test.zip',
-    '04.00.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.04.00.test.zip',
-    '04.01.test': 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/neurofinder.04.01.test.zip'
-}
+neurofinder_names = ['neurofinder.00.00', 'neurofinder.00.01', 'neurofinder.00.02',
+                     'neurofinder.00.03', 'neurofinder.00.04', 'neurofinder.00.05',
+                     'neurofinder.00.06', 'neurofinder.00.07', 'neurofinder.00.08',
+                     'neurofinder.00.09', 'neurofinder.00.10', 'neurofinder.00.11',
+                     'neurofinder.01.00', 'neurofinder.01.01', 'neurofinder.02.00',
+                     'neurofinder.02.01', 'neurofinder.03.00', 'neurofinder.04.00',
+                     'neurofinder.04.01', 'neurofinder.00.00.test', 'neurofinder.00.01.test',
+                     'neurofinder.01.00.test', 'neurofinder.01.01.test', 'neurofinder.02.00.test',
+                     'neurofinder.02.01.test', 'neurofinder.03.00.test', 'neurofinder.04.00.test',
+                     'neurofinder.04.01.test']
 
-neurofinder_aliases = sorted(list(alias_to_URL.keys()))
+name_to_URL = {name: 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/%s.zip' % name
+               for name in neurofinder_names}
 
 
-def load_neurofinder(dataset_aliases, datasets_dir='/home/kzh/.deep-calcium-datasets'):
+def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
+    '''Downloads neurofinder datasets and pre-processes them into hdf5 files.'''
 
     logger = logging.getLogger(funcname())
 
-    # Convert special aliases 'all', 'all_train', and 'all_test'.
-    if dataset_aliases.lower() == 'all':
-        dataset_aliases = sorted(list(alias_to_URL.keys()))
-    elif dataset_aliases.lower() == 'all_train':
-        _ = [a for a in list(alias_to_URL.keys()) if '.test' not in a]
-        dataset_aliases = sorted(_)
-    elif dataset_aliases.lower() == 'all_test':
-        _ = [a for a in list(alias_to_URL.keys()) if '.test' in a]
-        dataset_aliases = sorted(_)
+    # Convert special names 'all', 'all_train', and 'all_test'.
+    if names.lower() == 'all':
+        names = neurofinder_names
+    elif names.lower() == 'all_train':
+        _ = [n for n in neurofinder_names if '.test' not in n]
+        names = sorted(_)
+    elif names.lower() == 'all_test':
+        _ = [n for n in neurofinder_names if '.test' in n]
+        names = sorted(_)
     else:
-        dataset_aliases = dataset_aliases.split(',')
+        names = names.split(',')
 
     if not path.exists(datasets_dir):
         mkdir(datasets_dir)
 
     # Download datasets, unzip them, delete zip files.
-    for alias in dataset_aliases:
-        url = alias_to_URL[alias]
-        zip_name = url.split('/')[-1]
+    for name in names:
+        url = name_to_URL[name]
+        zip_name = '%s.zip' % name
         zip_path = '%s/%s' % (datasets_dir, zip_name)
         unzip_name = zip_name[:-4]
         unzip_path = zip_path[:-4]
@@ -98,15 +80,17 @@ def load_neurofinder(dataset_aliases, datasets_dir='/home/kzh/.deep-calcium-data
 
     # Read the sequences and masks and store them as hdf5 files. Return the hdf5 objects.
     S, M = [], []
-    for alias in dataset_aliases:
+    for name in names:
 
-        logger.info('Preparing hdf5 files for %s.' % alias)
+        logger.info('Preparing hdf5 files for %s.' % name)
 
         # Create and populate the hdf5 sequence.
-        path_s = '%s/neurofinder.%s/sequence.hdf5' % (datasets_dir, alias)
+        path_s = '%s/%s/sequence.hdf5' % (datasets_dir, name)
         if not path.exists(path_s):
+            logger.info('Populating %s.' % path_s)
             sf = h5py.File(path_s, 'w')
-            dir_s_i = '%s/neurofinder.%s/images' % (datasets_dir, alias)
+            sf.attrs['name'] = name
+            dir_s_i = '%s/%s/images' % (datasets_dir, name)
             paths_s_i = sorted(glob('%s/*.tiff' % (dir_s_i)))
             s = np.array([imread(p) * 1. / MAX_VAL_S for p in paths_s_i], dtype=NP_DT_S)
             dset_s = sf.create_dataset('s', s.shape, HDF5_DT_S)
@@ -121,16 +105,18 @@ def load_neurofinder(dataset_aliases, datasets_dir='/home/kzh/.deep-calcium-data
         # Store the read-only sequence.
         S.append(h5py.File(path_s, 'r'))
 
-        # No mask for test sequences.
-        if '.test' in alias:
-            M.append(None)
-            continue
-
-        # Create and populate the hdf5 mask.
-        path_m = '%s/neurofinder.%s/mask.hdf5' % (datasets_dir, alias)
+        # Create the hdf5 mask either way for consistency.
+        path_m = '%s/%s/mask.hdf5' % (datasets_dir, name)
         if not path.exists(path_m):
             mf = h5py.File(path_m, 'w')
-            r = '%s/neurofinder.%s/regions/regions.json' % (datasets_dir, alias)
+            mf.close()
+
+        # Populate the mask for training datasets.
+        if '.test' not in name and not path.exists(path_m):
+            logger.info('Populating %s.' % path_m)
+            mf = h5py.File(path_m, 'w')
+            mf.attrs['name'] = name
+            r = '%s/%s/regions/regions.json' % (datasets_dir, name)
             regions = json.load(open(r))
             m_shape = S[-1].get('s').shape[1:]
             m = [tomask(r['coordinates'], m_shape) for r in regions]
@@ -143,7 +129,7 @@ def load_neurofinder(dataset_aliases, datasets_dir='/home/kzh/.deep-calcium-data
         # Store the read-only mask.
         M.append(h5py.File(path_m, 'r'))
 
-    if len(dataset_aliases) == 1:
+    if len(names) == 1:
         return S[0], M[0]
     else:
         return S, M
