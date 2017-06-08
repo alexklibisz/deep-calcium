@@ -7,7 +7,7 @@ import sys
 sys.path.append('.')
 
 from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary
-from deepcalcium.datasets.neurofinder import load_neurofinder
+from deepcalcium.datasets.nf import load_neurofinder
 
 np.random.seed(865)
 logging.basicConfig(level=logging.INFO)
@@ -24,24 +24,23 @@ def training(dataset_name, weights_path):
         checkpoint_dir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
     )
 
-    # Training.
-    model.fit(
-        S_trn, M_trn,               # hdf5 sequences and masks.
-        weights_path=weights_path,  # Pre-trained weights.
-        window_shape=(96, 96),      # Input/output windows to the network.
-        nb_epochs=125,              # Epochs.
-        batch_size=32,              # Batch size - adjust based on GPU.
-        keras_callbacks=[],         # Custom keras callbacks.
-        val_prop=0.2,              # Proportion of each sequence for validation.
-    )
+    # # Training.
+    # model.fit(
+    #     S_trn, M_trn,               # hdf5 sequences and masks.
+    #     weights_path=weights_path,  # Pre-trained weights.
+    #     window_shape=(96, 96),      # Input/output windows to the network.
+    #     nb_epochs=125,              # Epochs.
+    #     batch_size=50,              # Batch size - adjust based on GPU.
+    #     keras_callbacks=[],         # Custom keras callbacks.
+    #     val_prop=0.2,              # Proportion of each sequence for validation.
+    # )
 
     # Evaluate training data performance using neurofinder metrics.
     model.evaluate(
         S_trn, M_trn,
         weights_path=weights_path,
         window_shape=(512, 512),
-        batch_size=10,
-        random_mean=True
+        save_to_checkpoint_dir=True
     )
 
 

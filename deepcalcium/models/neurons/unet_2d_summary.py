@@ -4,7 +4,9 @@ from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, 
 from keras.models import Model
 from keras.optimizers import Adam
 from math import ceil
+from multiprocessing import Pool
 from os import path, mkdir
+from scipy.misc import imsave
 from time import time
 from tqdm import tqdm
 import keras.backend as K
@@ -13,6 +15,7 @@ import numpy as np
 import sys
 
 from deepcalcium.utils.runtime import funcname
+from deepcalcium.datasets.nf import mask_metrics
 
 
 class ValSamplesCallback(Callback):
@@ -56,57 +59,59 @@ class ValSamplesCallback(Callback):
 def _build_compile_unet(window_shape, weights_path):
     '''Builds and compiles the keras UNet model. Can be replaced from outside the class if desired. Returns a compiled keras model.'''
 
+    logger = logging.getLogger(funcname())
+
     x = inputs = Input(window_shape)
 
     x = Reshape(window_shape + (1,))(x)
     x = BatchNormalization()(x)
 
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    dc_0_out = x = Dropout(0.1)(x)
-
-    x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    dc_1_out = x = Dropout(0.1)(x)
+    dc_0_out = x = Dropout(0.2)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
-    dc_2_out = x = Dropout(0.1)(x)
+    dc_1_out = x = Dropout(0.2)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
-    dc_3_out = x = Dropout(0.1)(x)
+    dc_2_out = x = Dropout(0.2)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
+    x = Conv2D(512, 3, padding='same', activation='relu')(x)
+    x = Conv2D(512, 3, padding='same', activation='relu')(x)
+    dc_3_out = x = Dropout(0.2)(x)
+
+    x = MaxPooling2D(2, strides=2)(x)
+    x = Conv2D(1024, 3, padding='same', activation='relu')(x)
+    x = Conv2D(1024, 3, padding='same', activation='relu')(x)
+    x = Conv2DTranspose(512, 2, strides=2, activation='relu')(x)
+    x = Dropout(0.2)(x)
+
+    x = concatenate([x, dc_3_out], axis=3)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(256, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
+    x = Dropout(0.2)(x)
 
-    x = concatenate([x, dc_3_out], axis=3)
+    x = concatenate([x, dc_2_out], axis=3)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
+    x = Dropout(0.2)(x)
 
-    x = concatenate([x, dc_2_out], axis=3)
+    x = concatenate([x, dc_1_out], axis=3)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
-
-    x = concatenate([x, dc_1_out], axis=3)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(32, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
+    x = Dropout(0.2)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(2, 1, activation='softmax')(x)
     x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
 
@@ -131,6 +136,7 @@ def _build_compile_unet(window_shape, weights_path):
 
     if weights_path is not None:
         model.load_weights(weights_path)
+        logger.info('Loaded weights from %s.' % weights_path)
 
     return model
 
@@ -138,11 +144,12 @@ def _build_compile_unet(window_shape, weights_path):
 class UNet2DSummary(object):
 
     def __init__(self, checkpoint_dir, model_builder=_build_compile_unet,
-                 summfunc=lambda s: np.mean(s * 1. / 255., axis=0)):
+                 summfunc=lambda s: s.get('summary_mean')[...]):
 
         self.cpdir = checkpoint_dir
         self.model_builder = model_builder
         self.summfunc = summfunc
+        self.model = None
 
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
@@ -154,12 +161,12 @@ class UNet2DSummary(object):
         logger = logging.getLogger(funcname())
 
         # Define, compile neural net.
-        model = self.model_builder(window_shape, weights_path)
-        model.summary()
+        self.model = self.model_builder(window_shape, weights_path)
+        self.model.summary()
 
         # Pre-compute summaries for generators.
-        logger.info('Pre-computing sequence and mask summaries.')
-        S_summ = [self.summfunc(s.get('s')[...]) for s in tqdm(S)]
+        logger.info('Computing sequence and mask summaries.')
+        S_summ = [self.summfunc(s) for s in tqdm(S)]
         M_summ = [np.max(m.get('m')[...], axis=0) for m in tqdm(M)]
 
         # Define generators for training and validation data.
@@ -178,25 +185,68 @@ class UNet2DSummary(object):
             ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=5,
                               cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
             EarlyStopping('val_dice_squared', min_delta=1e-2,
-                          patience=10, mode='max', verbose=1),
+                          patience=15, mode='max', verbose=1),
             ModelCheckpoint('%s/weights_val_combined.hdf5' % self.cpdir, mode='max',
                             monitor='val_dice_squared', save_best_only=True, verbose=1)
 
         ] + keras_callbacks
 
-        # nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
-        nb_steps_trn = 100
+        nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
         nb_steps_val = min(int(nb_steps_trn * 0.25), 30)
 
-        model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
-                            validation_data=gen_val, validation_steps=nb_steps_val,
-                            callbacks=callbacks, verbose=1,
-                            workers=2, pickle_safe=True, max_q_size=100)
+        self.model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
+                                 validation_data=gen_val, validation_steps=nb_steps_val,
+                                 callbacks=callbacks, verbose=1,
+                                 workers=2, pickle_safe=True, max_q_size=100)
 
-    def evaluate(self, S, M, weights_path, window_shape=(512, 512), batch_size=5, random_mean=False):
+    def evaluate(self, S, M, weights_path=None, window_shape=(512, 512), save_to_checkpoint_dir=False):
         '''Evaluates predicted masks vs. true masks for the given sequences..'''
 
-        print('TODO: evaluate')
+        assert self.model is not None or weights_path is not None
+        if self.model is None:
+            self.model = self.model_builder(window_shape, weights_path)
+
+        logger = logging.getLogger(funcname())
+
+        # Pre-compute summaries.
+        logger.info('Computing sequence and mask summaries.')
+        S_summ = [self.summfunc(s) for s in tqdm(S)]
+        M_summ = [np.max(m.get('m')[...], axis=0) for m in tqdm(M)]
+
+        # Currently only supporting full-sized windows.
+        assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
+
+        # Helper to pad up to window shape.
+        wh, ww = window_shape
+        pad = lambda s: np.pad(s, ((0, wh - s.shape[0]), (0, ww - s.shape[1])), 'reflect')
+
+        # Evaluate each sequence, mask pair.
+        mean_prec, mean_reca, mean_comb = 0., 0., 0.
+        for i, (s, m) in enumerate(zip(S_summ, M_summ)):
+            name = S[i].attrs['name']
+            hs, ws = s.shape
+
+            # Pad and make prediction.
+            s_batch = np.zeros((1, ) + window_shape)
+            s_batch[0] = pad(s)
+            mp = self.model.predict(s_batch)[0, :hs, :ws].round()
+
+            # Track scores.
+            prec, reca, incl, excl, comb = mask_metrics(m, mp)
+            logger.info('%s: prec=%.3lf, reca=%.3lf, inc=%.3lf, excl=%.3lf, comb=%.3lf' % (
+                name, prec, reca, incl, excl, comb))
+            mean_prec += prec / len(S)
+            mean_reca += reca / len(S)
+            mean_comb += comb / len(S)
+
+            # Save mask and prediction.
+            if save_to_checkpoint_dir:
+                imsave('%s/%s_m.png' % (self.cpdir, name), m * 255)
+                imsave('%s/%s_mp.png' % (self.cpdir, name), mp * 255)
+
+        logger.info('Mean prec=%.3lf, reca=%.3lf, comb=%.3lf' %
+                    (mean_prec, mean_reca, mean_comb))
+
         return
 
     def predict(self, S, weights_path, window_shape=(512, 512), batch_size=10, save_to_checkpoint_dir=False):

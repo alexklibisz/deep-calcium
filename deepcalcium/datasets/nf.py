@@ -1,7 +1,10 @@
 from glob import glob
+from neurofinder import centers, shapes
 from os import path, mkdir, remove
 from scipy.misc import imread
+from skimage import measure
 from urllib2 import urlopen
+from regional import many
 from zipfile import ZipFile
 import h5py
 import json
@@ -69,7 +72,7 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
         remove(zip_path)
 
     NP_DT_S, NP_DT_M = np.float32, np.uint8
-    HDF5_DT_S, HDF5_DT_M = 'int8', 'int8'
+    HDF5_DT_S, HDF5_DT_M = 'float16', 'int8'
     MAX_VAL_S = 2**16
 
     def tomask(coords, shape):
@@ -92,7 +95,7 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
             sf.attrs['name'] = name
             dir_s_i = '%s/%s/images' % (datasets_dir, name)
             paths_s_i = sorted(glob('%s/*.tiff' % (dir_s_i)))
-            s = np.array([imread(p) * 255. / MAX_VAL_S for p in paths_s_i], dtype=NP_DT_S)
+            s = np.array([imread(p) * 1. / MAX_VAL_S for p in paths_s_i], dtype=NP_DT_S)
             dset_s = sf.create_dataset('s', s.shape, dtype=HDF5_DT_S)
             dset_s[...] = s
             dset_mean = sf.create_dataset('summary_mean', s.shape[1:], dtype=NP_DT_S)
@@ -130,3 +133,30 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
         M.append(h5py.File(path_m, 'r'))
 
     return S, M
+
+
+def mask_metrics(m, mp):
+    '''Computes precision, recall, inclusion, exclusion, and combined (F1) score for the given mask (m) and predicted mask (mp).'''
+
+    logger = logging.getLogger(funcname())
+
+    def mask_to_regional(msk):
+        '''Convert a mask to a regional many object so it can be measured 
+        using the neurofinder library.'''
+        msklbl = measure.label(msk)
+        if np.max(msklbl) == 0:
+            coords = [[[0, 0], [1, 1]], [[0, 0], [1, 1]]]
+        else:
+            coords = []
+            for lbl in range(1, np.max(msklbl)):
+                yy, xx = np.where(msklbl == lbl)
+                coords.append([[y, x] for y, x in zip(yy, xx)])
+        return many(coords)
+
+    m_reg = mask_to_regional(m)
+    mp_reg = mask_to_regional(mp)
+    r, p = centers(mp_reg, m_reg)
+    i, e = shapes(mp_reg, m_reg)
+    c = 2. * (r * p) / (r + p)
+
+    return (p, r, i, e, c)

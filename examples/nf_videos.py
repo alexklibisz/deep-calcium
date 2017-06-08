@@ -6,7 +6,7 @@ import logging
 import sys
 sys.path.append('.')
 
-from deepcalcium.datasets.neurofinder import load_neurofinder, neurofinder_names
+from deepcalcium.datasets.nf import load_neurofinder, neurofinder_names
 from deepcalcium.utils.misc import dataset_to_mp4
 
 logging.basicConfig(level=logging.INFO)
