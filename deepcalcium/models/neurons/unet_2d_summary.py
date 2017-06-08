@@ -22,6 +22,9 @@ class ValSamplesCallback(Callback):
         super(Callback, self).__init__()
         self.batch_gen = batch_gen
         self.cpdir = cpdir
+        s_batch, m_batch = next(self.batch_gen)
+        self.s_batch = s_batch
+        self.m_batch = m_batch
 
     def on_epoch_end(self, epoch, logs={}):
 
@@ -29,8 +32,8 @@ class ValSamplesCallback(Callback):
         matplotlib.use('agg')
         import matplotlib.pyplot as plt
 
-        s_batch, m_batch = next(self.batch_gen)
-        s_batch, m_batch = s_batch[:20], m_batch[:20]
+        s_batch, m_batch = self.s_batch, self.m_batch
+        s_batch, m_batch = s_batch[:25], m_batch[:25]
         mp_batch = self.model.predict(s_batch)
         fig, _ = plt.subplots(len(s_batch), 4, figsize=(4, int(len(s_batch) * 0.4)))
 
@@ -45,8 +48,8 @@ class ValSamplesCallback(Callback):
 
         plt.suptitle('Epoch %d, val dice squared = %.3lf' %
                      (epoch, logs['val_dice_squared']))
-        plt.savefig('%s/samples_val_%03d.png' % (self.cpdir, epoch), dpi=550)
-        plt.savefig('%s/samples_val_latest.png' % (self.cpdir), dpi=550)
+        plt.savefig('%s/samples_val_%03d.png' % (self.cpdir, epoch), dpi=600)
+        plt.savefig('%s/samples_val_latest.png' % (self.cpdir), dpi=600)
         plt.close()
 
 
@@ -55,32 +58,55 @@ def _build_compile_unet(window_shape, weights_path):
 
     x = inputs = Input(window_shape)
 
-    x = Dropout(0.01)(x)
     x = Reshape(window_shape + (1,))(x)
-    x = Conv2D(10, 3, padding='same', activation='relu')(x)
-    x = Conv2D(10, 3, padding='same', activation='relu')(x)
+    x = BatchNormalization()(x)
+
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
     dc_0_out = x = Dropout(0.1)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(20, 3, padding='same', activation='relu')(x)
-    x = Conv2D(20, 3, padding='same', activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
     dc_1_out = x = Dropout(0.1)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(40, 3, padding='same', activation='relu')(x)
-    x = Conv2D(40, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(20, 2, strides=2, activation='relu')(x)
+    x = Conv2D(128, 3, padding='same', activation='relu')(x)
+    x = Conv2D(128, 3, padding='same', activation='relu')(x)
+    dc_2_out = x = Dropout(0.1)(x)
+
+    x = MaxPooling2D(2, strides=2)(x)
+    x = Conv2D(256, 3, padding='same', activation='relu')(x)
+    x = Conv2D(256, 3, padding='same', activation='relu')(x)
+    dc_3_out = x = Dropout(0.1)(x)
+
+    x = MaxPooling2D(2, strides=2)(x)
+    x = Conv2D(512, 3, padding='same', activation='relu')(x)
+    x = Conv2D(512, 3, padding='same', activation='relu')(x)
+    x = Conv2DTranspose(256, 2, strides=2, activation='relu')(x)
+    x = Dropout(0.1)(x)
+
+    x = concatenate([x, dc_3_out], axis=3)
+    x = Conv2D(256, 3, padding='same', activation='relu')(x)
+    x = Conv2D(256, 3, padding='same', activation='relu')(x)
+    x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
+    x = Dropout(0.1)(x)
+
+    x = concatenate([x, dc_2_out], axis=3)
+    x = Conv2D(128, 3, padding='same', activation='relu')(x)
+    x = Conv2D(128, 3, padding='same', activation='relu')(x)
+    x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
     x = Dropout(0.1)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
-    x = Conv2D(20, 3, padding='same', activation='relu')(x)
-    x = Conv2D(20, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(10, 2, strides=2, activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2DTranspose(32, 2, strides=2, activation='relu')(x)
     x = Dropout(0.1)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
-    x = Conv2D(10, 3, padding='same', activation='relu')(x)
-    x = Conv2D(10, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
     x = Conv2D(2, 1, activation='softmax')(x)
     x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
 
@@ -100,7 +126,7 @@ def _build_compile_unet(window_shape, weights_path):
     def dice_squared_loss(yt, yp):
         return 1 - dice_squared(yt, yp)
 
-    model.compile(optimizer=Adam(1e-3), loss=dice_squared_loss,
+    model.compile(optimizer=Adam(0.0008), loss=dice_squared_loss,
                   metrics=[dice_squared, tp, pp])
 
     if weights_path is not None:
@@ -129,6 +155,7 @@ class UNet2DSummary(object):
 
         # Define, compile neural net.
         model = self.model_builder(window_shape, weights_path)
+        model.summary()
 
         # Pre-compute summaries for generators.
         logger.info('Pre-computing sequence and mask summaries.')
@@ -139,16 +166,16 @@ class UNet2DSummary(object):
         # Lambda function defines range of y vals used for training and validation.
         gen_trn = self._batch_gen_trn(S_summ, M_summ, batch_size, window_shape,
                                       get_y_range=lambda hs: (0, hs * (1 - val_prop)),
-                                      nb_max_augment=5)
+                                      nb_max_augment=2)
 
         gen_val = self._batch_gen_trn(S_summ, M_summ, batch_size, window_shape,
                                       get_y_range=lambda hs: (hs * (1 - val_prop), hs),
-                                      nb_max_augment=5)
+                                      nb_max_augment=2)
 
         callbacks = [
             ValSamplesCallback(gen_val, self.cpdir),
             CSVLogger('%s/training.csv' % self.cpdir),
-            ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=2,
+            ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=5,
                               cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
             EarlyStopping('val_dice_squared', min_delta=1e-2,
                           patience=10, mode='max', verbose=1),
@@ -157,7 +184,8 @@ class UNet2DSummary(object):
 
         ] + keras_callbacks
 
-        nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
+        # nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
+        nb_steps_trn = 100
         nb_steps_val = min(int(nb_steps_trn * 0.25), 30)
 
         model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
@@ -205,7 +233,7 @@ class UNet2DSummary(object):
                 ds_idx = next(s_idxs)
                 s, m = S_summ[ds_idx], M_summ[ds_idx]
 
-                # Dimensions. Heigh constrained by y range.
+                # Dimensions. Height constrained by y range.
                 hs, ws = s.shape
                 hsmin, hsmax = get_y_range(hs)
 
