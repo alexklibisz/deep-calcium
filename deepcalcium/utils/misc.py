@@ -18,8 +18,6 @@ def dataset_to_mp4(sequence, mask, mp4_path):
         s = sequence.get('s')[...]
         m = mask.get('m')[...]
 
-        s = s / np.max(s) * 255
-
         video = np.zeros((*s.shape, 3), dtype=np.uint8)
         video[:, :, :, 0] = s
         video[:, :, :, 1] = s
@@ -38,7 +36,6 @@ def dataset_to_mp4(sequence, mask, mp4_path):
 
         s = sequence.get('s')
         video = s[...]
-        video = video / np.max(video) * 255
         video = video.astype(np.uint8)
 
     vwrite(mp4_path, video)

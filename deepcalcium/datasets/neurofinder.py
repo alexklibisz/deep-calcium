@@ -69,7 +69,7 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
         remove(zip_path)
 
     NP_DT_S, NP_DT_M = np.float32, np.uint8
-    HDF5_DT_S, HDF5_DT_M = 'float', 'i8'
+    HDF5_DT_S, HDF5_DT_M = 'int8', 'int8'
     MAX_VAL_S = 2**16
 
     def tomask(coords, shape):
@@ -92,7 +92,7 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
             sf.attrs['name'] = name
             dir_s_i = '%s/%s/images' % (datasets_dir, name)
             paths_s_i = sorted(glob('%s/*.tiff' % (dir_s_i)))
-            s = np.array([imread(p) * 1. / MAX_VAL_S for p in paths_s_i], dtype=NP_DT_S)
+            s = np.array([imread(p) * 255. / MAX_VAL_S for p in paths_s_i], dtype=NP_DT_S)
             dset_s = sf.create_dataset('s', s.shape, HDF5_DT_S)
             dset_s[...] = s
             dset_mean = sf.create_dataset('summary_mean', s.shape[1:], dtype=NP_DT_S)
@@ -111,25 +111,22 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
             mf = h5py.File(path_m, 'w')
             mf.close()
 
-        # Populate the mask for training datasets.
-        if '.test' not in name and not path.exists(path_m):
-            logger.info('Populating %s.' % path_m)
-            mf = h5py.File(path_m, 'w')
-            mf.attrs['name'] = name
-            r = '%s/%s/regions/regions.json' % (datasets_dir, name)
-            regions = json.load(open(r))
-            m_shape = S[-1].get('s').shape[1:]
-            m = [tomask(r['coordinates'], m_shape) for r in regions]
-            m = np.array(m, dtype=NP_DT_M)
-            dset_m = mf.create_dataset('m', m.shape, HDF5_DT_M)
-            dset_m[...] = m
-            mf.flush()
-            mf.close()
+            # Populate the mask for training datasets.
+            if '.test' not in name:
+                logger.info('Populating %s.' % path_m)
+                mf = h5py.File(path_m, 'w')
+                mf.attrs['name'] = name
+                r = '%s/%s/regions/regions.json' % (datasets_dir, name)
+                regions = json.load(open(r))
+                m_shape = S[-1].get('s').shape[1:]
+                m = [tomask(r['coordinates'], m_shape) for r in regions]
+                m = np.array(m, dtype=NP_DT_M)
+                dset_m = mf.create_dataset('m', m.shape, HDF5_DT_M)
+                dset_m[...] = m
+                mf.flush()
+                mf.close()
 
         # Store the read-only mask.
         M.append(h5py.File(path_m, 'r'))
 
-    if len(names) == 1:
-        return S[0], M[0]
-    else:
-        return S, M
+    return S, M

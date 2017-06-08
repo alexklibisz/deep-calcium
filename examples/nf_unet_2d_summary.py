@@ -18,7 +18,7 @@ def training(dataset_name, weights_path):
 
     # Load all sequences and masks as hdf5 File objects.
     S_trn, M_trn = load_neurofinder(dataset_name)
-
+    
     # Setup model.
     model = UNet2DSummary(
         checkpoint_dir='checkpoints/unet_2d_summary',
@@ -34,8 +34,7 @@ def training(dataset_name, weights_path):
         nb_epochs=20,               # Epochs.
         batch_size=60,              # Batch size - adjust based on GPU.
         keras_callbacks=[],         # Custom keras callbacks.
-        sample_frames_min=500,      # Number of frames to read for each training sample.
-        sample_frames_max=1500,
+        sample_frames=True,         # Sample random frames to create summaries.
         val_proportion=0.25,        # Proportion of each sequence for validation.
         val_random_mean=True        # Average validation mask over random summaries.
     )
