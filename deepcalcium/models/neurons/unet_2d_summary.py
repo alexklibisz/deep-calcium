@@ -191,7 +191,8 @@ class UNet2DSummary(object):
 
         ] + keras_callbacks
 
-        nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
+        # nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
+        nb_steps_trn = 100
         nb_steps_val = min(int(nb_steps_trn * 0.25), 30)
 
         self.model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
