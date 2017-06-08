@@ -18,12 +18,10 @@ def training(dataset_name, weights_path):
 
     # Load all sequences and masks as hdf5 File objects.
     S_trn, M_trn = load_neurofinder(dataset_name)
-    
+
     # Setup model.
     model = UNet2DSummary(
-        checkpoint_dir='checkpoints/unet_2d_summary',
-        summary_func=lambda s: np.mean(s, axis=0),
-        random_state=np.random
+        checkpoint_dir='checkpoints/unet_2d_summary_96x96'
     )
 
     # Training.
@@ -31,12 +29,10 @@ def training(dataset_name, weights_path):
         S_trn, M_trn,               # hdf5 sequences and masks.
         weights_path=weights_path,  # Pre-trained weights.
         window_shape=(96, 96),      # Input/output windows to the network.
-        nb_epochs=20,               # Epochs.
-        batch_size=60,              # Batch size - adjust based on GPU.
+        nb_epochs=100,               # Epochs.
+        batch_size=40,              # Batch size - adjust based on GPU.
         keras_callbacks=[],         # Custom keras callbacks.
-        sample_frames=True,         # Sample random frames to create summaries.
-        val_proportion=0.25,        # Proportion of each sequence for validation.
-        val_random_mean=True        # Average validation mask over random summaries.
+        val_prop=0.25,              # Proportion of each sequence for validation.
     )
 
     # Evaluate training data performance using neurofinder metrics.
@@ -57,8 +53,7 @@ def prediction(dataset_name, weights_path):
 
     model = UNet2DSummary(
         checkpoint_dir='checkpoints/unet_2d_summary',
-        summary_func=lambda s: np.mean(s, axis=0),
-        random_state=np.random
+        summary_func=lambda s: np.mean(s, axis=0)
     )
 
     # Prediction. Saves predictions to checkpoint directory and returns them

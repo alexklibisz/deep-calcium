@@ -1,7 +1,7 @@
 from glob import glob
 from os import path, mkdir, remove
 from scipy.misc import imread
-from urllib.request import urlretrieve
+from urllib2 import urlopen
 from zipfile import ZipFile
 import h5py
 import json
@@ -58,7 +58,7 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
             continue
 
         logger.info('Downloading %s to %s.' % (zip_name, zip_path))
-        urlretrieve(url, zip_path)
+        urlopen(url, zip_path)
 
         logger.info('Unzipping %s to %s.' % (zip_name, unzip_path))
         zip_ref = ZipFile(zip_path, 'r')
@@ -93,7 +93,7 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
             dir_s_i = '%s/%s/images' % (datasets_dir, name)
             paths_s_i = sorted(glob('%s/*.tiff' % (dir_s_i)))
             s = np.array([imread(p) * 255. / MAX_VAL_S for p in paths_s_i], dtype=NP_DT_S)
-            dset_s = sf.create_dataset('s', s.shape, HDF5_DT_S)
+            dset_s = sf.create_dataset('s', s.shape, dtype=HDF5_DT_S)
             dset_s[...] = s
             dset_mean = sf.create_dataset('summary_mean', s.shape[1:], dtype=NP_DT_S)
             dset_mean[...] = np.mean(s, axis=0)
@@ -121,7 +121,7 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
                 m_shape = S[-1].get('s').shape[1:]
                 m = [tomask(r['coordinates'], m_shape) for r in regions]
                 m = np.array(m, dtype=NP_DT_M)
-                dset_m = mf.create_dataset('m', m.shape, HDF5_DT_M)
+                dset_m = mf.create_dataset('m', m.shape, dtype=HDF5_DT_M)
                 dset_m[...] = m
                 mf.flush()
                 mf.close()
