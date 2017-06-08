@@ -65,49 +65,50 @@ def _build_compile_unet(window_shape, weights_path):
 
     x = Reshape(window_shape + (1,))(x)
     x = BatchNormalization()(x)
+    x = Dropout(0.0)(x)
 
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    dc_0_out = x = Dropout(0.2)(x)
+    dc_0_out = x = Dropout(0.0)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
-    dc_1_out = x = Dropout(0.2)(x)
+    dc_1_out = x = Dropout(0.0)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
-    dc_2_out = x = Dropout(0.2)(x)
+    dc_2_out = x = Dropout(0.0)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
-    dc_3_out = x = Dropout(0.2)(x)
+    dc_3_out = x = Dropout(0.0)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(1024, 3, padding='same', activation='relu')(x)
     x = Conv2D(1024, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(512, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.0)(x)
 
     x = concatenate([x, dc_3_out], axis=3)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(256, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.0)(x)
 
     x = concatenate([x, dc_2_out], axis=3)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.0)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.0)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
@@ -129,9 +130,9 @@ def _build_compile_unet(window_shape, weights_path):
         return (nmr / dnm)
 
     def dice_squared_loss(yt, yp):
-        return 1 - dice_squared(yt, yp)
+        return 1 - dice_squared(yt, yp)  # + K.abs(tp(yt, yp) - pp(yt, yp))
 
-    model.compile(optimizer=Adam(0.0008), loss=dice_squared_loss,
+    model.compile(optimizer=Adam(0.002), loss=dice_squared_loss,
                   metrics=[dice_squared, tp, pp])
 
     if weights_path is not None:
@@ -161,8 +162,8 @@ class UNet2DSummary(object):
         logger = logging.getLogger(funcname())
 
         # Define, compile neural net.
-        self.model = self.model_builder(window_shape, weights_path)
-        self.model.summary()
+        model = self.model_builder(window_shape, weights_path)
+        model.summary()
 
         # Pre-compute summaries for generators.
         logger.info('Computing sequence and mask summaries.')
@@ -173,21 +174,29 @@ class UNet2DSummary(object):
         # Lambda function defines range of y vals used for training and validation.
         gen_trn = self._batch_gen_trn(S_summ, M_summ, batch_size, window_shape,
                                       get_y_range=lambda hs: (0, hs * (1 - val_prop)),
-                                      nb_max_augment=2)
+                                      # nb_max_augment=2
+                                      nb_max_augment=0)
 
         gen_val = self._batch_gen_trn(S_summ, M_summ, batch_size, window_shape,
                                       get_y_range=lambda hs: (hs * (1 - val_prop), hs),
-                                      nb_max_augment=2)
+                                      # nb_max_augment=2
+                                      nb_max_augment=0)
 
         callbacks = [
             ValSamplesCallback(gen_val, self.cpdir),
             CSVLogger('%s/training.csv' % self.cpdir),
-            ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=5,
+            ReduceLROnPlateau(monitor='dice_squared', factor=0.8, patience=5,
                               cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
-            EarlyStopping('val_dice_squared', min_delta=1e-2,
+            EarlyStopping('dice_squared', min_delta=1e-2,
                           patience=15, mode='max', verbose=1),
-            ModelCheckpoint('%s/weights_val_combined.hdf5' % self.cpdir, mode='max',
-                            monitor='val_dice_squared', save_best_only=True, verbose=1)
+            # ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=5,
+            #                   cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
+            # EarlyStopping('val_dice_squared', min_delta=1e-2,
+            #               patience=15, mode='max', verbose=1),
+            # ModelCheckpoint('%s/weights_val_dice_squared.hdf5' % self.cpdir, mode='max',
+            #                monitor='val_dice_squared', save_best_only=True, verbose=1)
+            ModelCheckpoint('%s/weights_dice_squared.hdf5' % self.cpdir, mode='max',
+                            monitor='dice_squared', save_best_only=True, verbose=1)
 
         ] + keras_callbacks
 
@@ -195,19 +204,19 @@ class UNet2DSummary(object):
         nb_steps_trn = 100
         nb_steps_val = min(int(nb_steps_trn * 0.25), 30)
 
-        self.model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
-                                 validation_data=gen_val, validation_steps=nb_steps_val,
-                                 callbacks=callbacks, verbose=1,
-                                 workers=2, pickle_safe=True, max_q_size=100)
+        model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
+                            validation_data=gen_val, validation_steps=nb_steps_val,
+                            callbacks=callbacks, verbose=1,
+                            workers=3, pickle_safe=True, max_q_size=100)
+
+        # TODO: return the model weights.
 
     def evaluate(self, S, M, weights_path=None, window_shape=(512, 512), save_to_checkpoint_dir=False):
         '''Evaluates predicted masks vs. true masks for the given sequences..'''
 
-        assert self.model is not None or weights_path is not None
-        if self.model is None:
-            self.model = self.model_builder(window_shape, weights_path)
-
         logger = logging.getLogger(funcname())
+
+        model = self.model_builder(window_shape, weights_path)
 
         # Pre-compute summaries.
         logger.info('Computing sequence and mask summaries.')
@@ -230,7 +239,7 @@ class UNet2DSummary(object):
             # Pad and make prediction.
             s_batch = np.zeros((1, ) + window_shape)
             s_batch[0] = pad(s)
-            mp = self.model.predict(s_batch)[0, :hs, :ws].round()
+            mp = model.predict(s_batch)[0, :hs, :ws].round()
 
             # Track scores.
             prec, reca, incl, excl, comb = mask_metrics(m, mp)

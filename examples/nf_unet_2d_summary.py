@@ -24,16 +24,25 @@ def training(dataset_name, weights_path):
         checkpoint_dir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
     )
 
-    # # Training.
-    # model.fit(
-    #     S_trn, M_trn,               # hdf5 sequences and masks.
-    #     weights_path=weights_path,  # Pre-trained weights.
-    #     window_shape=(96, 96),      # Input/output windows to the network.
-    #     nb_epochs=125,              # Epochs.
-    #     batch_size=50,              # Batch size - adjust based on GPU.
-    #     keras_callbacks=[],         # Custom keras callbacks.
-    #     val_prop=0.2,              # Proportion of each sequence for validation.
-    # )
+    # Training.
+    model.fit(
+       S_trn, M_trn,               # hdf5 sequences and masks.
+       weights_path=weights_path,  # Pre-trained weights.
+       window_shape=(96, 96),      # Input/output windows to the network.
+       nb_epochs=125,              # Epochs.
+       batch_size=50,              # Batch size - adjust based on GPU.
+       keras_callbacks=[],         # Custom keras callbacks.
+       val_prop=0.2,              # Proportion of each sequence for validation.
+    )
+
+def evaluation(dataset_name, weights_path):
+    '''Evaluate datasets.'''
+
+    S_trn, M_trn = load_neurofinder(dataset_name)
+    
+    model = UNet2DSummary(
+        checkpoint_dir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
+    )
 
     # Evaluate training data performance using neurofinder metrics.
     model.evaluate(
@@ -76,21 +85,29 @@ if __name__ == "__main__":
     # Training cli.
     sp_trn = sp.add_parser('train', help='CLI for training.')
     sp_trn.set_defaults(which='train')
-    sp_trn.add_argument('dataset', help='dataset name', default='all_train', type=str)
-    sp_trn.add_argument('-w', '--weights', help='path to weights', type=str)
+    sp_trn.add_argument('dataset', help='dataset name', default='all_train')
+    sp_trn.add_argument('-w', '--weights', help='path to weights')
 
+    # Training cli.
+    sp_eva = sp.add_parser('evaluate', help='CLI for training.')
+    sp_eva.set_defaults(which='evaluate')
+    sp_eva.add_argument('dataset', help='dataset name', default='all_train')
+    sp_eva.add_argument('-w', '--weights', help='path to weights', required=True)
+    
     # Prediction cli.
     sp_prd = sp.add_parser('predict', help='CLI for prediction.')
     sp_prd.set_defaults(which='predict')
-    sp_prd.add_argument('dataset', help='dataset name', default='all', type=str)
-    sp_prd.add_argument('-w', '--weights', help='path to weights',
-                        type=str, required=True)
+    sp_prd.add_argument('dataset', help='dataset name', default='all')
+    sp_prd.add_argument('-w', '--weights', help='path to weights', required=True)
 
     # Parse and run appropriate function.
     args = vars(ap.parse_args())
 
     if args['which'] == 'train':
         training(args['dataset'], args['weights'])
+
+    if args['which'] == 'evaluate':
+        evaluation(args['dataset'], args['weights'])
 
     if args['which'] == 'predict':
         prediction(args['dataset'], args['weights'])
