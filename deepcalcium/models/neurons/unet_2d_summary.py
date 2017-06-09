@@ -7,6 +7,7 @@ from math import ceil
 from multiprocessing import Pool
 from os import path, mkdir
 from scipy.misc import imsave
+from skimage import transform
 from time import time
 from tqdm import tqdm
 import keras.backend as K
@@ -65,54 +66,54 @@ def _build_compile_unet(window_shape, weights_path):
 
     x = Reshape(window_shape + (1,))(x)
     x = BatchNormalization()(x)
-    x = Dropout(0.0)(x)
+    x = Dropout(0.01)(x)
 
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    dc_0_out = x = Dropout(0.1)(x)
+
+    x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    dc_0_out = x = Dropout(0.0)(x)
+    dc_1_out = x = Dropout(0.1)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
-    dc_1_out = x = Dropout(0.0)(x)
+    dc_2_out = x = Dropout(0.1)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
-    dc_2_out = x = Dropout(0.0)(x)
+    dc_3_out = x = Dropout(0.1)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(512, 3, padding='same', activation='relu')(x)
-    x = Conv2D(512, 3, padding='same', activation='relu')(x)
-    dc_3_out = x = Dropout(0.0)(x)
-
-    x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(1024, 3, padding='same', activation='relu')(x)
-    x = Conv2D(1024, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(512, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.0)(x)
-
-    x = concatenate([x, dc_3_out], axis=3)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(256, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.0)(x)
+    x = Dropout(0.1)(x)
 
-    x = concatenate([x, dc_2_out], axis=3)
+    x = concatenate([x, dc_3_out], axis=3)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.0)(x)
+    x = Dropout(0.1)(x)
 
-    x = concatenate([x, dc_1_out], axis=3)
+    x = concatenate([x, dc_2_out], axis=3)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.0)(x)
+    x = Dropout(0.1)(x)
+
+    x = concatenate([x, dc_1_out], axis=3)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2DTranspose(32, 2, strides=2, activation='relu')(x)
+    x = Dropout(0.1)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
     x = Conv2D(2, 1, activation='softmax')(x)
     x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
 
@@ -132,7 +133,7 @@ def _build_compile_unet(window_shape, weights_path):
     def dice_squared_loss(yt, yp):
         return 1 - dice_squared(yt, yp)  # + K.abs(tp(yt, yp) - pp(yt, yp))
 
-    model.compile(optimizer=Adam(0.002), loss=dice_squared_loss,
+    model.compile(optimizer=Adam(0.0008), loss=dice_squared_loss,
                   metrics=[dice_squared, tp, pp])
 
     if weights_path is not None:
@@ -174,35 +175,28 @@ class UNet2DSummary(object):
         # Lambda function defines range of y vals used for training and validation.
         gen_trn = self._batch_gen_trn(S_summ, M_summ, batch_size, window_shape,
                                       get_y_range=lambda hs: (0, hs * (1 - val_prop)),
-                                      # nb_max_augment=2
-                                      nb_max_augment=0)
+                                      nb_max_augment=5)
 
         gen_val = self._batch_gen_trn(S_summ, M_summ, batch_size, window_shape,
                                       get_y_range=lambda hs: (hs * (1 - val_prop), hs),
-                                      # nb_max_augment=2
-                                      nb_max_augment=0)
+                                      nb_max_augment=1)
 
         callbacks = [
             ValSamplesCallback(gen_val, self.cpdir),
             CSVLogger('%s/training.csv' % self.cpdir),
-            ReduceLROnPlateau(monitor='dice_squared', factor=0.8, patience=5,
+            ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=5,
                               cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
-            EarlyStopping('dice_squared', min_delta=1e-2,
-                          patience=15, mode='max', verbose=1),
-            # ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=5,
-            #                   cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
-            # EarlyStopping('val_dice_squared', min_delta=1e-2,
-            #               patience=15, mode='max', verbose=1),
-            # ModelCheckpoint('%s/weights_val_dice_squared.hdf5' % self.cpdir, mode='max',
-            #                monitor='val_dice_squared', save_best_only=True, verbose=1)
+            EarlyStopping('val_dice_squared', min_delta=1e-2,
+                           patience=15, mode='max', verbose=1),
+            ModelCheckpoint('%s/weights_val_dice_squared.hdf5' % self.cpdir, mode='max',
+                            monitor='val_dice_squared', save_best_only=True, verbose=1),
             ModelCheckpoint('%s/weights_dice_squared.hdf5' % self.cpdir, mode='max',
                             monitor='dice_squared', save_best_only=True, verbose=1)
 
         ] + keras_callbacks
 
-        # nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
-        nb_steps_trn = 100
-        nb_steps_val = min(int(nb_steps_trn * 0.25), 30)
+        nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
+        nb_steps_val = min(int(nb_steps_trn * 0.5), 50)
 
         model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
                             validation_data=gen_val, validation_steps=nb_steps_val,
@@ -302,12 +296,28 @@ class UNet2DSummary(object):
         rng = np.random
         hw, ww = window_shape
 
+        def rot(a, b):
+            deg = np.random.randint(0, 360)
+            a = transform.rotate(a, deg, mode='reflect', preserve_range=True)
+            b = transform.rotate(a, deg, mode='reflect', preserve_range=True)
+            return (a, b)
+            
+        def stretch(a, b):
+            hw_, ww_ = np.random.randint(hw, hw * 1.3), np.random.randint(ww, ww * 1.3)
+            resize = lambda x: transform.resize(x, (hw_, ww_), preserve_range=True)
+            crop = lambda x: x[:hw, :ww]
+            return crop(resize(a)), crop(resize(b).round())
+
         augment_funcs = [
-            lambda x: np.fliplr(x),
-            lambda x: np.flipud(x),
-            lambda x: np.rot90(x, 1),
-            lambda x: np.rot90(x, 2),
-            lambda x: np.rot90(x, 3)
+            lambda a, b: (a, b),
+            lambda a, b: (np.fliplr(a), np.fliplr(b)),
+            lambda a, b: (np.flipud(a), np.flipud(b)),
+            lambda a, b: (np.rot90(a, 1), np.rot90(b, 1)),
+            lambda a, b: (np.rot90(a, 2), np.rot90(b, 2)),
+            lambda a, b: (np.rot90(a, 3), np.rot90(b, 3)),
+            #lambda a, b: rot(a, b),
+            #lambda a, b: (a + np.random.uniform(-0.01, 0.01), b),
+            #lambda a, b: stretch(a, b)
         ]
 
         while True:
@@ -340,7 +350,6 @@ class UNet2DSummary(object):
                 # Random augmentations.
                 nb_augment = rng.randint(0, nb_max_augment + 1)
                 for aug in rng.choice(augment_funcs, nb_augment):
-                    s_batch[b_idx] = aug(s_batch[b_idx])
-                    m_batch[b_idx] = aug(m_batch[b_idx])
+                    s_batch[b_idx], m_batch[b_idx] = aug(s_batch[b_idx], m_batch[b_idx])
 
             yield s_batch, m_batch
