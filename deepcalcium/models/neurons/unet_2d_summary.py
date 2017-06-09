@@ -65,8 +65,8 @@ def _build_compile_unet(window_shape, weights_path):
     x = inputs = Input(window_shape)
 
     x = Reshape(window_shape + (1,))(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.01)(x)
+    # x = BatchNormalization()(x)
+    # x = Dropout(0.01)(x)
 
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
@@ -131,7 +131,7 @@ def _build_compile_unet(window_shape, weights_path):
         return (nmr / dnm)
 
     def dice_squared_loss(yt, yp):
-        return 1 - dice_squared(yt, yp)  # + K.abs(tp(yt, yp) - pp(yt, yp))
+        return 1 - dice_squared(yt, yp)
 
     model.compile(optimizer=Adam(0.0008), loss=dice_squared_loss,
                   metrics=[dice_squared, tp, pp])
@@ -143,21 +143,30 @@ def _build_compile_unet(window_shape, weights_path):
     return model
 
 
+def _summarize_sequence(s):
+    scale = lambda x: ((x - np.min(x)) / (np.max(x) - np.min(x))) * 2 - 1
+    return scale(s.get('summary_mean')[...])
+
+
+def _summarize_mask(m):
+    return np.max(m.get('m'), axis=0)
+
+
 class UNet2DSummary(object):
 
-    def __init__(self, cpdir, model_builder=_build_compile_unet,
-                 summfunc=lambda s: s.get('summary_mean')[...]):
+    def __init__(self, cpdir, sequence_summary_func=_summarize_sequence,
+                 mask_summary_func=_summarize_mask, model_builder=_build_compile_unet):
 
         self.cpdir = cpdir
         self.model_builder = model_builder
-        self.summfunc = summfunc
-        self.model = None
+        self.sequence_summary_func = sequence_summary_func
+        self.mask_summary_func = mask_summary_func
 
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(self, S, M, weights_path=None, window_shape=(96, 96), nb_epochs=20, batch_size=60,
-            val_prop=0.25, keras_callbacks=[]):
+    def fit(self, S, M, weights_path=None, window_shape=(96, 96),
+            nb_epochs=20, batch_size=60, val_prop=0.2, keras_callbacks=[]):
         '''Constructs network based on parameters and trains with the given data.'''
 
         logger = logging.getLogger(funcname())
@@ -166,20 +175,15 @@ class UNet2DSummary(object):
         model = self.model_builder(window_shape, weights_path)
         model.summary()
 
-        # Pre-compute summaries for generators.
-        logger.info('Computing sequence and mask summaries.')
-        S_summ = [self.summfunc(s) for s in tqdm(S)]
-        M_summ = [np.max(m.get('m')[...], axis=0) for m in tqdm(M)]
-
         # Define generators for training and validation data.
-        # Lambda function defines range of y vals used for training and validation.
-        gen_trn = self._batch_gen_trn(S_summ, M_summ, batch_size, window_shape,
-                                      get_y_range=lambda hs: (0, hs * (1 - val_prop)),
-                                      nb_max_augment=5)
+        # Lambda functions define range of y indexes used for training and validation.
+        gyr_trn = lambda hs: (0, int(hs * (1 - val_prop)))
+        gen_trn = self.batch_gen_fit(S, M, batch_size, window_shape, get_y_range=gyr_trn,
+                                     nb_max_augment=5)
 
-        gen_val = self._batch_gen_trn(S_summ, M_summ, batch_size, window_shape,
-                                      get_y_range=lambda hs: (hs * (1 - val_prop), hs),
-                                      nb_max_augment=1)
+        gyr_val = lambda hs: (int(hs * (1 - val_prop)), hs)
+        gen_val = self.batch_gen_fit(S, M, batch_size, window_shape, get_y_range=gyr_val,
+                                     nb_max_augment=0)
 
         callbacks = [
             ValSamplesCallback(gen_val, self.cpdir),
@@ -187,7 +191,7 @@ class UNet2DSummary(object):
             ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=5,
                               cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
             EarlyStopping('val_dice_squared', min_delta=1e-2,
-                           patience=15, mode='max', verbose=1),
+                          patience=15, mode='max', verbose=1),
             ModelCheckpoint('%s/weights_val_dice_squared.hdf5' % self.cpdir, mode='max',
                             monitor='val_dice_squared', save_best_only=True, verbose=1),
             ModelCheckpoint('%s/weights_dice_squared.hdf5' % self.cpdir, mode='max',
@@ -195,13 +199,91 @@ class UNet2DSummary(object):
 
         ] + keras_callbacks
 
-        nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
-        nb_steps_val = min(int(nb_steps_trn * 0.5), 50)
+        # nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
+        # nb_steps_val = min(int(nb_steps_trn * 0.5), 50)
+        nb_steps_trn = 100
+        nb_steps_val = 50
 
         model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
                             validation_data=gen_val, validation_steps=nb_steps_val,
                             callbacks=callbacks, verbose=1,
                             workers=3, pickle_safe=True, max_q_size=100)
+
+    def batch_gen_fit(self, S, M, batch_size, window_shape, get_y_range, nb_max_augment=5):
+        '''Builds and yields random batches used for training.'''
+
+        logger = logging.getLogger(funcname())
+        rng = np.random
+        hw, ww = window_shape
+
+        # Pre-compute summaries for generators.
+        S_summ = [self.sequence_summary_func(s) for s in S]
+        M_summ = [self.mask_summary_func(m) for m in M]
+
+        # Define augmentation functions to operate on the frame and its
+        # corresponding mask.
+        def rot(a, b):
+            deg = rng.randint(1, 360)
+            a = transform.rotate(a, deg, mode='reflect', preserve_range=True)
+            b = transform.rotate(b, deg, mode='reflect', preserve_range=True)
+            return (a, b)
+
+        def stretch(a, b):
+            hw_, ww_ = rng.randint(hw, hw * 1.3), np.random.randint(ww, ww * 1.3)
+            resize = lambda x: transform.resize(x, (hw_, ww_), preserve_range=True)
+            crop = lambda x: x[:hw, :ww]
+            return crop(resize(a)), crop(resize(b).round())
+
+        augment_funcs = [
+            lambda a, b: (a, b),                                 # Identity.
+            lambda a, b: (a[:, ::-1], b[:, ::-1]),               # Horizontal flip.
+            lambda a, b: (a[::-1, :], b[::-1, :]),               # Vertical flip.
+            lambda a, b: (a + rng.uniform(-0.1, 0.1), b),  # Brightness adjustment.
+            lambda a, b: rot(a, b),                              # Free rotation.
+            lambda a, b: stretch(a, b)                           # Make larger and crop.
+        ]
+
+        # Pre-compute neuron locations for faster sampling.
+        neuron_locs = [zip(*np.where(m == 1)) for m in M_summ]
+
+        while True:
+
+            s_idxs = cycle(rng.choice(np.arange(len(S_summ)), len(S_summ)))
+
+            # Empty batches to fill.
+            s_batch = np.zeros((batch_size, hw, ww), dtype=np.float32)
+            m_batch = np.zeros((batch_size, hw, ww), dtype=np.uint8)
+
+            for b_idx in range(batch_size):
+
+                # Pick datasets sequentially.
+                ds_idx = next(s_idxs)
+                s, m = S_summ[ds_idx], M_summ[ds_idx]
+
+                # Dimensions. Height constrained by y range.
+                hs, ws = s.shape
+                hsmin, hsmax = get_y_range(hs)
+
+                # Pick a random neuron location within this mask to center the window.
+                cy, cx = neuron_locs[ds_idx][rng.randint(0, len(neuron_locs[ds_idx]))]
+
+                # Window boundaries with a random offset and extra care to stay in bounds.
+                cy = min(max(hsmin, cy + rng.randint(-20, 20)), hsmax)
+                cx = min(max(0, cx + rng.randint(-20, 20)), ws)
+                y0 = min(max(0, int(cy - (hw / 2))), hsmax - 1 - hw)
+                x0 = min(max(0, int(cx - (ww / 2))), ws - 1 - ww)
+                y1, x1 = y0 + hw, x0 + ww
+
+                # Slice the window.
+                m_batch[b_idx] = m[y0:y1, x0:x1]
+                s_batch[b_idx] = s[y0:y1, x0:x1]
+
+                # Random augmentations.
+                nb_augment = rng.randint(0, nb_max_augment + 1)
+                for aug in rng.choice(augment_funcs, nb_augment):
+                    s_batch[b_idx], m_batch[b_idx] = aug(s_batch[b_idx], m_batch[b_idx])
+
+            yield s_batch, m_batch
 
     def evaluate(self, S, M, weights_path=None, window_shape=(512, 512), save=False):
         '''Evaluates predicted masks vs. true masks for the given sequences..'''
@@ -212,8 +294,8 @@ class UNet2DSummary(object):
 
         # Pre-compute summaries.
         logger.info('Computing sequence and mask summaries.')
-        S_summ = [self.summfunc(s) for s in tqdm(S)]
-        M_summ = [np.max(m.get('m')[...], axis=0) for m in tqdm(M)]
+        S_summ = [self.sequence_summary_func(s) for s in tqdm(S)]
+        M_summ = [self.mask_summary_func(m) for m in tqdm(M)]
 
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
@@ -258,7 +340,7 @@ class UNet2DSummary(object):
 
         # Pre-compute summaries.
         logger.info('Computing sequence and mask summaries.')
-        S_summ = [self.summfunc(s) for s in tqdm(S)]
+        S_summ = [self.sequence_summary_func(s) for s in tqdm(S)]
 
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
@@ -269,7 +351,7 @@ class UNet2DSummary(object):
 
         # Store predictions.
         Mp = []
-        
+
         # Evaluate each sequence, mask pair.
         mean_prec, mean_reca, mean_comb = 0., 0., 0.
         for i, s in enumerate(S_summ):
@@ -287,69 +369,5 @@ class UNet2DSummary(object):
                 imsave('%s/%s_mp.png' % (self.cpdir, name), mp * 255)
 
             logger.info('%s prediction complete.' % name)
-                
+
         return Mp
-
-    def _batch_gen_trn(self, S_summ, M_summ, batch_size, window_shape, get_y_range, nb_max_augment=10):
-        '''Builds and yields random batches used for training.'''
-
-        rng = np.random
-        hw, ww = window_shape
-
-        def rot(a, b):
-            deg = np.random.randint(0, 360)
-            a = transform.rotate(a, deg, mode='reflect', preserve_range=True)
-            b = transform.rotate(a, deg, mode='reflect', preserve_range=True)
-            return (a, b)
-            
-        def stretch(a, b):
-            hw_, ww_ = np.random.randint(hw, hw * 1.3), np.random.randint(ww, ww * 1.3)
-            resize = lambda x: transform.resize(x, (hw_, ww_), preserve_range=True)
-            crop = lambda x: x[:hw, :ww]
-            return crop(resize(a)), crop(resize(b).round())
-
-        augment_funcs = [
-            lambda a, b: (a, b),
-            lambda a, b: (np.fliplr(a), np.fliplr(b)),
-            lambda a, b: (np.flipud(a), np.flipud(b)),
-            lambda a, b: (np.rot90(a, 1), np.rot90(b, 1)),
-            lambda a, b: (np.rot90(a, 2), np.rot90(b, 2)),
-            lambda a, b: (np.rot90(a, 3), np.rot90(b, 3)),
-            #lambda a, b: rot(a, b),
-            #lambda a, b: (a + np.random.uniform(-0.01, 0.01), b),
-            #lambda a, b: stretch(a, b)
-        ]
-
-        while True:
-
-            s_idxs = cycle(rng.choice(np.arange(len(S_summ)), len(S_summ)))
-
-            # Empty batches to fill.
-            s_batch = np.zeros((batch_size, hw, ww), dtype=np.float32)
-            m_batch = np.zeros((batch_size, hw, ww), dtype=np.uint8)
-
-            for b_idx in range(batch_size):
-
-                # Pick datasets sequentially.
-                ds_idx = next(s_idxs)
-                s, m = S_summ[ds_idx], M_summ[ds_idx]
-
-                # Dimensions. Height constrained by y range.
-                hs, ws = s.shape
-                hsmin, hsmax = get_y_range(hs)
-
-                # Pick random window boundaries.
-                y0 = rng.randint(hsmin, hsmax - 1 - hw)
-                x0 = rng.randint(0, ws - 1 - ww)
-                y1, x1 = y0 + hw, x0 + ww
-
-                # Slice the window.
-                m_batch[b_idx] = m[y0:y1, x0:x1]
-                s_batch[b_idx] = s[y0:y1, x0:x1]
-
-                # Random augmentations.
-                nb_augment = rng.randint(0, nb_max_augment + 1)
-                for aug in rng.choice(augment_funcs, nb_augment):
-                    s_batch[b_idx], m_batch[b_idx] = aug(s_batch[b_idx], m_batch[b_idx])
-
-            yield s_batch, m_batch

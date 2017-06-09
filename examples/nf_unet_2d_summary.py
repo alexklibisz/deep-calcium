@@ -27,20 +27,21 @@ def training(dataset_name, weights_path):
 
     # Training.
     model.fit(
-       S_trn, M_trn,               # hdf5 sequences and masks.
-       weights_path=weights_path,  # Pre-trained weights.
-       window_shape=(96, 96),      # Input/output windows to the network.
-       nb_epochs=200,              # Epochs.
-       batch_size=32,              # Batch size - adjust based on GPU.
-       keras_callbacks=[],         # Custom keras callbacks.
-       val_prop=0.2,               # Proportion of each sequence for validation.
+        S_trn, M_trn,               # hdf5 sequences and masks.
+        weights_path=weights_path,  # Pre-trained weights.
+        window_shape=(96, 96),      # Input/output windows to the network.
+        nb_epochs=30,               # Epochs.
+        batch_size=32,              # Batch size - adjust based on GPU.
+        keras_callbacks=[],         # Custom keras callbacks.
+        val_prop=0.2,               # Proportion of each sequence for validation.
     )
+
 
 def evaluation(dataset_name, weights_path):
     '''Evaluate datasets.'''
 
     S_trn, M_trn = nf_load_hdf5(dataset_name)
-    
+
     model = UNet2DSummary(
         cpdir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
     )
@@ -97,7 +98,7 @@ if __name__ == "__main__":
     sp_eva.set_defaults(which='evaluate')
     sp_eva.add_argument('dataset', help='dataset name', default='all_train')
     sp_eva.add_argument('-w', '--weights', help='path to weights', required=True)
-    
+
     # Prediction cli.
     sp_prd = sp.add_parser('predict', help='CLI for prediction.')
     sp_prd.set_defaults(which='predict')
