@@ -166,8 +166,8 @@ class UNet2DSummary(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(self, S, M, weights_path=None, window_shape=(96, 96),
-            nb_epochs=20, batch_size=60, prop_trn=0.8, prop_val=0.2, keras_callbacks=[]):
+    def fit(self, S, M, weights_path=None, window_shape=(96, 96), batch_size=60, nb_steps_trn=150,
+            nb_steps_val=100, nb_epochs=20, prop_trn=0.8, prop_val=0.2, keras_callbacks=[]):
         '''Constructs network based on parameters and trains with the given data.'''
 
         logger = logging.getLogger(funcname())
@@ -199,11 +199,6 @@ class UNet2DSummary(object):
                             monitor='dice_squared', save_best_only=True, verbose=1)
 
         ] + keras_callbacks
-
-        # nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
-        # nb_steps_val = min(int(nb_steps_trn * 0.5), 50)
-        nb_steps_trn = 150
-        nb_steps_val = 100
 
         model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
                             validation_data=gen_val, validation_steps=nb_steps_val,
