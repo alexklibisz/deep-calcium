@@ -28,7 +28,7 @@ name_to_URL = {name: 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofi
                for name in neurofinder_names}
 
 
-def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
+def nf_load_hdf5(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
     '''Downloads neurofinder datasets and pre-processes them into hdf5 files.'''
 
     logger = logging.getLogger(funcname())
@@ -135,7 +135,7 @@ def load_neurofinder(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
     return S, M
 
 
-def mask_metrics(m, mp):
+def nf_mask_metrics(m, mp):
     '''Computes precision, recall, inclusion, exclusion, and combined (F1) score for the given mask (m) and predicted mask (mp).'''
 
     logger = logging.getLogger(funcname())
@@ -160,3 +160,34 @@ def mask_metrics(m, mp):
     c = 2. * (r * p) / (r + p)
 
     return (p, r, i, e, c)
+
+def nf_submit(Mp, names, json_path):
+
+    logger = logging.getLogger(funcname())
+
+    submission = []
+    for mp, name in zip(Mp, names):
+        # Label each of the distinct components and break the labeled
+        # image into its regions.
+        if name.startswith('neurofinder.'):
+            name = '.'.join(name.split('.')[1:])
+            
+        mp_labeled = measure.label(mp)
+        if np.max(mp_labeled) == 0:
+            regions = [{'coordinates': [[[0, 0]]]}]
+        else:
+            regions = []
+            for lbl in range(1, np.max(mp_labeled)):
+                xx, yy = np.where(mp_labeled == lbl)
+                coords = [[x, y] for x, y in zip(xx, yy)]
+                regions.append({'coordinates': coords})
+        
+        submission.append({
+            "dataset": name,
+            "regions": regions
+        })
+    
+    fp = open(json_path, 'w')
+    json.dump(submission, fp)
+    fp.close()
+    logger.info('Saved submission to %s.' % json_path)

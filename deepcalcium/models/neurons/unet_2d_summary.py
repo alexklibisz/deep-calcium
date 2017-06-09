@@ -15,7 +15,7 @@ import numpy as np
 import sys
 
 from deepcalcium.utils.runtime import funcname
-from deepcalcium.datasets.nf import mask_metrics
+from deepcalcium.datasets.nf import nf_mask_metrics
 
 
 class ValSamplesCallback(Callback):
@@ -144,10 +144,10 @@ def _build_compile_unet(window_shape, weights_path):
 
 class UNet2DSummary(object):
 
-    def __init__(self, checkpoint_dir, model_builder=_build_compile_unet,
+    def __init__(self, cpdir, model_builder=_build_compile_unet,
                  summfunc=lambda s: s.get('summary_mean')[...]):
 
-        self.cpdir = checkpoint_dir
+        self.cpdir = cpdir
         self.model_builder = model_builder
         self.summfunc = summfunc
         self.model = None
@@ -209,9 +209,7 @@ class UNet2DSummary(object):
                             callbacks=callbacks, verbose=1,
                             workers=3, pickle_safe=True, max_q_size=100)
 
-        # TODO: return the model weights.
-
-    def evaluate(self, S, M, weights_path=None, window_shape=(512, 512), save_to_checkpoint_dir=False):
+    def evaluate(self, S, M, weights_path=None, window_shape=(512, 512), save=False):
         '''Evaluates predicted masks vs. true masks for the given sequences..'''
 
         logger = logging.getLogger(funcname())
@@ -242,7 +240,7 @@ class UNet2DSummary(object):
             mp = model.predict(s_batch)[0, :hs, :ws].round()
 
             # Track scores.
-            prec, reca, incl, excl, comb = mask_metrics(m, mp)
+            prec, reca, incl, excl, comb = nf_mask_metrics(m, mp)
             logger.info('%s: prec=%.3lf, reca=%.3lf, inc=%.3lf, excl=%.3lf, comb=%.3lf' % (
                 name, prec, reca, incl, excl, comb))
             mean_prec += prec / len(S)
@@ -250,20 +248,53 @@ class UNet2DSummary(object):
             mean_comb += comb / len(S)
 
             # Save mask and prediction.
-            if save_to_checkpoint_dir:
+            if save:
                 imsave('%s/%s_m.png' % (self.cpdir, name), m * 255)
                 imsave('%s/%s_mp.png' % (self.cpdir, name), mp * 255)
 
         logger.info('Mean prec=%.3lf, reca=%.3lf, comb=%.3lf' %
                     (mean_prec, mean_reca, mean_comb))
 
-        return
-
-    def predict(self, S, weights_path, window_shape=(512, 512), batch_size=10, save_to_checkpoint_dir=False):
+    def predict(self, S, weights_path, window_shape=(512, 512), batch_size=10, save=False):
         '''Predicts masks for the given sequences. Optionally saves the masks. Returns the masks as numpy arrays in order corresponding the given sequences.'''
 
-        print('TODO: predict')
-        return
+        logger = logging.getLogger(funcname())
+
+        model = self.model_builder(window_shape, weights_path)
+
+        # Pre-compute summaries.
+        logger.info('Computing sequence and mask summaries.')
+        S_summ = [self.summfunc(s) for s in tqdm(S)]
+
+        # Currently only supporting full-sized windows.
+        assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
+
+        # Helper to pad up to window shape.
+        wh, ww = window_shape
+        pad = lambda s: np.pad(s, ((0, wh - s.shape[0]), (0, ww - s.shape[1])), 'reflect')
+
+        # Store predictions.
+        Mp = []
+        
+        # Evaluate each sequence, mask pair.
+        mean_prec, mean_reca, mean_comb = 0., 0., 0.
+        for i, s in enumerate(S_summ):
+            name = S[i].attrs['name']
+            hs, ws = s.shape
+
+            # Pad and make prediction.
+            s_batch = np.zeros((1, ) + window_shape)
+            s_batch[0] = pad(s)
+            mp = model.predict(s_batch)[0, :hs, :ws].round()
+            Mp.append(mp)
+
+            # Save prediction.
+            if save:
+                imsave('%s/%s_mp.png' % (self.cpdir, name), mp * 255)
+
+            logger.info('%s prediction complete.' % name)
+                
+        return Mp
 
     def _batch_gen_trn(self, S_summ, M_summ, batch_size, window_shape, get_y_range, nb_max_augment=10):
         '''Builds and yields random batches used for training.'''

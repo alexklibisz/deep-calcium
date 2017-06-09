@@ -1,4 +1,5 @@
 # Neurofinder training and prediction using UNet 2D Summary model.
+from time import time
 import argparse
 import logging
 import numpy as np
@@ -7,7 +8,7 @@ import sys
 sys.path.append('.')
 
 from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary
-from deepcalcium.datasets.nf import load_neurofinder
+from deepcalcium.datasets.nf import nf_load_hdf5, nf_submit
 
 np.random.seed(865)
 logging.basicConfig(level=logging.INFO)
@@ -17,11 +18,11 @@ def training(dataset_name, weights_path):
     '''Train on all neurofinder datasets.'''
 
     # Load all sequences and masks as hdf5 File objects.
-    S_trn, M_trn = load_neurofinder(dataset_name)
+    S_trn, M_trn = nf_load_hdf5(dataset_name)
 
     # Setup model.
     model = UNet2DSummary(
-        checkpoint_dir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
+        cpdir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
     )
 
     # Training.
@@ -32,16 +33,16 @@ def training(dataset_name, weights_path):
        nb_epochs=125,              # Epochs.
        batch_size=50,              # Batch size - adjust based on GPU.
        keras_callbacks=[],         # Custom keras callbacks.
-       val_prop=0.2,              # Proportion of each sequence for validation.
+       val_prop=0.2,               # Proportion of each sequence for validation.
     )
 
 def evaluation(dataset_name, weights_path):
     '''Evaluate datasets.'''
 
-    S_trn, M_trn = load_neurofinder(dataset_name)
+    S_trn, M_trn = nf_load_hdf5(dataset_name)
     
     model = UNet2DSummary(
-        checkpoint_dir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
+        cpdir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
     )
 
     # Evaluate training data performance using neurofinder metrics.
@@ -49,7 +50,7 @@ def evaluation(dataset_name, weights_path):
         S_trn, M_trn,
         weights_path=weights_path,
         window_shape=(512, 512),
-        save_to_checkpoint_dir=True
+        save=True
     )
 
 
@@ -57,24 +58,27 @@ def prediction(dataset_name, weights_path):
     '''Predictions on all neurofinder datasets.'''
 
     # Load all sequences and masks as hdf5 File objects.
-    S, _ = load_neurofinder(dataset_name)
+    S_tst, _ = nf_load_hdf5(dataset_name)
 
     model = UNet2DSummary(
-        checkpoint_dir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
+        cpdir='checkpoints/unet_2d_summary_96x96_%s' % dataset_name
     )
 
     # Prediction. Saves predictions to checkpoint directory and returns them
     # as numpy arrays.
-    M_prd = model.predict(
+    Mp = model.predict(
         S_tst,                       # hdf5 sequences (no masks).
         weights_path=weights_path,   # Pre-trained weights.
         window_shape=(512, 512),     # Input/output windows to the network.
-        batch_size=10,
-        random_mean=True,
-        save_to_checkpoint_dir=True
+        save=True
     )
 
     # Make a submission from the predicted masks.
+    json_path = '%s/submission_%d.json' % (model.cpdir, time())
+    names = [s.attrs['name'] for s in S_tst]
+    nf_submit(Mp, names, json_path)
+    json_path = '%s/submission_latest.json' % model.cpdir
+    nf_submit(Mp, names, json_path)
 
 
 if __name__ == "__main__":
