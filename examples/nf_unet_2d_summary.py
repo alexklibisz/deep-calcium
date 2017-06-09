@@ -30,10 +30,11 @@ def training(dataset_name, weights_path):
         S_trn, M_trn,               # hdf5 sequences and masks.
         weights_path=weights_path,  # Pre-trained weights.
         window_shape=(96, 96),      # Input/output windows to the network.
-        nb_epochs=30,               # Epochs.
+        nb_epochs=80,               # Epochs.
         batch_size=32,              # Batch size - adjust based on GPU.
         keras_callbacks=[],         # Custom keras callbacks.
-        val_prop=0.2,               # Proportion of each sequence for validation.
+        prop_trn=0.8,               # Proportion of height for training, validation.
+        prop_val=0.2,
     )
 
 

@@ -65,7 +65,7 @@ def _build_compile_unet(window_shape, weights_path):
     x = inputs = Input(window_shape)
 
     x = Reshape(window_shape + (1,))(x)
-    # x = BatchNormalization()(x)
+    x = BatchNormalization()(x)
     # x = Dropout(0.01)(x)
 
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
@@ -131,7 +131,7 @@ def _build_compile_unet(window_shape, weights_path):
         return (nmr / dnm)
 
     def dice_squared_loss(yt, yp):
-        return 1 - dice_squared(yt, yp)
+        return (1 - dice_squared(yt, yp))
 
     model.compile(optimizer=Adam(0.0008), loss=dice_squared_loss,
                   metrics=[dice_squared, tp, pp])
@@ -144,8 +144,9 @@ def _build_compile_unet(window_shape, weights_path):
 
 
 def _summarize_sequence(s):
-    scale = lambda x: ((x - np.min(x)) / (np.max(x) - np.min(x))) * 2 - 1
-    return scale(s.get('summary_mean')[...])
+    # scale = lambda x: ((x - np.min(x)) / (np.max(x) - np.min(x))) * 2 - 1
+    # return scale(s.get('summary_mean')[...])
+    return s.get('summary_mean')[...]
 
 
 def _summarize_mask(m):
@@ -166,7 +167,7 @@ class UNet2DSummary(object):
             mkdir(self.cpdir)
 
     def fit(self, S, M, weights_path=None, window_shape=(96, 96),
-            nb_epochs=20, batch_size=60, val_prop=0.2, keras_callbacks=[]):
+            nb_epochs=20, batch_size=60, prop_trn=0.8, prop_val=0.2, keras_callbacks=[]):
         '''Constructs network based on parameters and trains with the given data.'''
 
         logger = logging.getLogger(funcname())
@@ -177,13 +178,13 @@ class UNet2DSummary(object):
 
         # Define generators for training and validation data.
         # Lambda functions define range of y indexes used for training and validation.
-        gyr_trn = lambda hs: (0, int(hs * (1 - val_prop)))
+        gyr_trn = lambda hs: (0, int(hs * prop_trn))
         gen_trn = self.batch_gen_fit(S, M, batch_size, window_shape, get_y_range=gyr_trn,
                                      nb_max_augment=5)
 
-        gyr_val = lambda hs: (int(hs * (1 - val_prop)), hs)
+        gyr_val = lambda hs: (int(hs * (1 - prop_trn)), hs)
         gen_val = self.batch_gen_fit(S, M, batch_size, window_shape, get_y_range=gyr_val,
-                                     nb_max_augment=0)
+                                     nb_max_augment=1)
 
         callbacks = [
             ValSamplesCallback(gen_val, self.cpdir),
@@ -201,8 +202,8 @@ class UNet2DSummary(object):
 
         # nb_steps_trn = ceil(sum([m.get('m').shape[0] for m in M]) * 1. / batch_size)
         # nb_steps_val = min(int(nb_steps_trn * 0.5), 50)
-        nb_steps_trn = 100
-        nb_steps_val = 50
+        nb_steps_trn = 150
+        nb_steps_val = 100
 
         model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
                             validation_data=gen_val, validation_steps=nb_steps_val,
@@ -220,8 +221,7 @@ class UNet2DSummary(object):
         S_summ = [self.sequence_summary_func(s) for s in S]
         M_summ = [self.mask_summary_func(m) for m in M]
 
-        # Define augmentation functions to operate on the frame and its
-        # corresponding mask.
+        # Define augmentation functions to operate on the frame and mask.
         def rot(a, b):
             deg = rng.randint(1, 360)
             a = transform.rotate(a, deg, mode='reflect', preserve_range=True)
@@ -234,13 +234,18 @@ class UNet2DSummary(object):
             crop = lambda x: x[:hw, :ww]
             return crop(resize(a)), crop(resize(b).round())
 
+        def brightness(a, b):
+            std = np.std(a)
+            adj = rng.uniform(-std, std)
+            return (np.clip(a + adj, 0, 1), b)
+
         augment_funcs = [
-            lambda a, b: (a, b),                                 # Identity.
-            lambda a, b: (a[:, ::-1], b[:, ::-1]),               # Horizontal flip.
-            lambda a, b: (a[::-1, :], b[::-1, :]),               # Vertical flip.
-            lambda a, b: (a + rng.uniform(-0.1, 0.1), b),  # Brightness adjustment.
-            lambda a, b: rot(a, b),                              # Free rotation.
-            lambda a, b: stretch(a, b)                           # Make larger and crop.
+            lambda a, b: (a, b),                      # Identity.
+            lambda a, b: (a[:, ::-1], b[:, ::-1]),    # Horizontal flip.
+            lambda a, b: (a[::-1, :], b[::-1, :]),    # Vertical flip.
+            lambda a, b: brightness(a, b),            # Brightness adjustment.
+            lambda a, b: rot(a, b),                   # Free rotation.
+            lambda a, b: stretch(a, b)                # Make larger and crop.
         ]
 
         # Pre-compute neuron locations for faster sampling.
