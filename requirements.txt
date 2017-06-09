@@ -3,6 +3,7 @@ backports.shutil-get-terminal-size==1.0.0
 backports.ssl-match-hostname==3.5.0.1
 bleach==2.0.0
 certifi==2017.4.17
+click==6.7
 configparser==3.5.0
 cycler==0.10.0
 decorator==4.0.11
@@ -10,6 +11,7 @@ entrypoints==0.2.3
 enum34==1.1.6
 funcsigs==1.0.2
 functools32==3.2.3.post2
+get==0.0.0
 h5py==2.7.0
 html5lib==0.999999999
 ipykernel==4.6.1
@@ -30,6 +32,7 @@ mock==2.0.0
 nbconvert==5.2.1
 nbformat==4.3.0
 networkx==1.11
+neurofinder==1.1.1
 notebook==5.0.0
 numpy==1.13.0
 olefile==0.44
@@ -39,9 +42,11 @@ pbr==3.0.1
 pexpect==4.2.1
 pickleshare==0.7.4
 Pillow==4.1.1
+post==0.0.0
 prompt-toolkit==1.0.14
 protobuf==3.3.0
 ptyprocess==0.5.1
+public==0.0.0
 Pygments==2.2.0
 pyparsing==2.2.0
 python-dateutil==2.6.0
@@ -50,9 +55,13 @@ PyWavelets==0.5.2
 PyYAML==3.12
 pyzmq==16.0.2
 qtconsole==4.3.0
+query-string==0.0.0
+regional==1.1.2
+request==0.0.0
 scandir==1.5
 scikit-image==0.13.0
 scipy==0.19.0
+setupfiles==0.0.49
 simplegeneric==0.8.1
 singledispatch==3.4.0.3
 six==1.10.0
@@ -63,7 +72,9 @@ terminado==0.6
 testpath==0.3.1
 Theano==0.9.0
 tornado==4.5.1
+tqdm==4.14.0
 traitlets==4.3.2
+urllib==1.21.1
 wcwidth==0.1.7
 webencodings==0.5.1
 Werkzeug==0.12.2
