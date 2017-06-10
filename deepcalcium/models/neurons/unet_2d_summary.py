@@ -1,8 +1,5 @@
 from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, EarlyStopping, CSVLogger, ReduceLROnPlateau
-from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, Reshape
-from keras.models import Model
-from keras.optimizers import Adam
 from math import ceil
 from multiprocessing import Pool
 from os import path, mkdir
@@ -10,7 +7,6 @@ from scipy.misc import imsave
 from skimage import transform
 from time import time
 from tqdm import tqdm
-import keras.backend as K
 import logging
 import numpy as np
 import sys
@@ -60,6 +56,11 @@ class ValSamplesCallback(Callback):
 def _build_compile_unet(window_shape, weights_path):
     '''Builds and compiles the keras UNet model. Can be replaced from outside the class if desired. Returns a compiled keras model.'''
 
+    from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, Reshape
+    from keras.models import Model
+    from keras.optimizers import Adam
+    import keras.backend as K
+    
     logger = logging.getLogger(funcname())
 
     x = inputs = Input(window_shape)
@@ -119,12 +120,24 @@ def _build_compile_unet(window_shape, weights_path):
 
     model = Model(inputs=inputs, outputs=x)
 
+    # True positive proportion.
     def tp(yt, yp):
         return K.sum(K.round(yt)) / (K.sum(K.clip(yt, 1, 1)) + K.epsilon())
 
+    # Predicted positive proportion.
     def pp(yt, yp):
         return K.sum(K.round(yp)) / (K.sum(K.clip(yp, 1, 1)) + K.epsilon())
 
+    def prec(yt, yp):
+        tp = yt * yp
+        fp = K.clip(yp - yt, 0, 1)
+        return tp / (tp + fp + K.epsilon())
+        
+    def reca(yt, yp):
+        tp = yt * yp
+        fn = K.clip(yt - yp, 0, 1)
+        return tp / (tp + fn + K.epsilon())
+        
     def dice_squared(yt, yp):
         nmr = 2 * K.sum(yt * yp)
         dnm = K.sum(yt**2) + K.sum(yp**2) + K.epsilon()
@@ -133,8 +146,8 @@ def _build_compile_unet(window_shape, weights_path):
     def dice_squared_loss(yt, yp):
         return (1 - dice_squared(yt, yp))
 
-    model.compile(optimizer=Adam(0.0008), loss=dice_squared_loss,
-                  metrics=[dice_squared, tp, pp])
+    model.compile(optimizer=Adam(0.0008), loss='binary_crossentropy',
+                  metrics=[dice_squared, tp, pp, prec, reca])
 
     if weights_path is not None:
         model.load_weights(weights_path)
@@ -144,8 +157,6 @@ def _build_compile_unet(window_shape, weights_path):
 
 
 def _summarize_sequence(s):
-    # scale = lambda x: ((x - np.min(x)) / (np.max(x) - np.min(x))) * 2 - 1
-    # return scale(s.get('summary_mean')[...])
     return s.get('summary_mean')[...]
 
 
@@ -166,7 +177,7 @@ class UNet2DSummary(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(self, S, M, weights_path=None, window_shape=(96, 96), batch_size=60, nb_steps_trn=150,
+    def fit(self, S, M, weights_path=None, window_shape=(96, 96), batch_size=32, nb_steps_trn=150,
             nb_steps_val=100, nb_epochs=20, prop_trn=0.8, prop_val=0.2, keras_callbacks=[]):
         '''Constructs network based on parameters and trains with the given data.'''
 
@@ -175,15 +186,19 @@ class UNet2DSummary(object):
         # Define, compile neural net.
         model = self.model_builder(window_shape, weights_path)
         model.summary()
+        
+        # Pre-compute summaries once to avoid problems with accessing HDF5 objects from multiple workers.
+        S_summ = [self.sequence_summary_func(s) for s in S]
+        M_summ = [self.mask_summary_func(m) for m in M]
 
         # Define generators for training and validation data.
         # Lambda functions define range of y indexes used for training and validation.
         gyr_trn = lambda hs: (0, int(hs * prop_trn))
-        gen_trn = self.batch_gen_fit(S, M, batch_size, window_shape, get_y_range=gyr_trn,
+        gen_trn = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_trn,
                                      nb_max_augment=5)
 
         gyr_val = lambda hs: (int(hs * (1 - prop_trn)), hs)
-        gen_val = self.batch_gen_fit(S, M, batch_size, window_shape, get_y_range=gyr_val,
+        gen_val = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_val,
                                      nb_max_augment=1)
 
         callbacks = [
@@ -191,30 +206,23 @@ class UNet2DSummary(object):
             CSVLogger('%s/training.csv' % self.cpdir),
             ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=5,
                               cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
-            EarlyStopping('val_dice_squared', min_delta=1e-2,
-                          patience=15, mode='max', verbose=1),
-            ModelCheckpoint('%s/weights_val_dice_squared.hdf5' % self.cpdir, mode='max',
-                            monitor='val_dice_squared', save_best_only=True, verbose=1),
-            ModelCheckpoint('%s/weights_dice_squared.hdf5' % self.cpdir, mode='max',
-                            monitor='dice_squared', save_best_only=True, verbose=1)
+            ModelCheckpoint('%s/weights_loss_val.hdf5' % self.cpdir, mode='min',
+                            monitor='val_loss', save_best_only=True, verbose=1),
+            ModelCheckpoint('%s/weights_loss_trn.hdf5' % self.cpdir, mode='min',
+                            monitor='loss', save_best_only=True, verbose=1)
 
         ] + keras_callbacks
 
         model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
                             validation_data=gen_val, validation_steps=nb_steps_val,
-                            callbacks=callbacks, verbose=1,
-                            workers=3, pickle_safe=True, max_q_size=100)
+                            callbacks=callbacks, verbose=1, max_q_size=100)
 
-    def batch_gen_fit(self, S, M, batch_size, window_shape, get_y_range, nb_max_augment=5):
+    def batch_gen_fit(self, S_summ, M_summ, batch_size, window_shape, get_y_range, nb_max_augment=5):
         '''Builds and yields random batches used for training.'''
 
         logger = logging.getLogger(funcname())
         rng = np.random
         hw, ww = window_shape
-
-        # Pre-compute summaries for generators.
-        S_summ = [self.sequence_summary_func(s) for s in S]
-        M_summ = [self.mask_summary_func(m) for m in M]
 
         # Define augmentation functions to operate on the frame and mask.
         def rot(a, b):
@@ -244,6 +252,7 @@ class UNet2DSummary(object):
         ]
 
         # Pre-compute neuron locations for faster sampling.
+        # TODO: adjust for the min/max y coordinates here.
         neuron_locs = [zip(*np.where(m == 1)) for m in M_summ]
 
         while True:
@@ -331,7 +340,7 @@ class UNet2DSummary(object):
         logger.info('Mean prec=%.3lf, reca=%.3lf, comb=%.3lf' %
                     (mean_prec, mean_reca, mean_comb))
 
-    def predict(self, S, weights_path, window_shape=(512, 512), batch_size=10, save=False):
+    def predict(self, S, weights_path=None, window_shape=(512, 512), batch_size=10, save=False):
         '''Predicts masks for the given sequences. Optionally saves the masks. Returns the masks as numpy arrays in order corresponding the given sequences.'''
 
         logger = logging.getLogger(funcname())

@@ -20,12 +20,12 @@ def dataset_to_mp4(sequence, mask, mp4_path):
 
         video = video * 1. / 255.
 
-        video = np.zeros((*s.shape, 3), dtype=np.uint8)
+        video = np.zeros(s.shape + (3,), dtype=np.uint8)
         video[:, :, :, 0] = s
         video[:, :, :, 1] = s
         video[:, :, :, 2] = s
 
-        outlines = np.zeros((*s.shape[1:], 3), )
+        outlines = np.zeros(s.shape[1:] + (3,), )
         for i in range(m.shape[0]):
             reg = one(list(zip(*np.where(m[i] == 1))))
             outlines += reg.mask(dims=m.shape[1:], fill=None,
@@ -43,3 +43,9 @@ def dataset_to_mp4(sequence, mask, mp4_path):
 
     vwrite(mp4_path, video)
     logger.info('Saved video %s.' % mp4_path)
+
+
+def mask_outlines(base_image, masks=[], colors=[]):
+    '''Apply each of the given masks to the base image with the given colors.'''
+
+    assert len(masks) == len(colors), 'One color per mask.'
