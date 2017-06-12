@@ -36,6 +36,7 @@ neurofinder==1.1.1
 notebook==5.0.0
 numpy==1.13.0
 olefile==0.44
+pandas==0.20.2
 pandocfilters==1.4.1
 pathlib2==2.2.1
 pbr==3.0.1
@@ -78,4 +79,5 @@ urllib==1.21.1
 wcwidth==0.1.7
 webencodings==0.5.1
 Werkzeug==0.12.2
+wget==3.2
 widgetsnbextension==2.0.0

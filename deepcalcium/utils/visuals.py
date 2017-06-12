@@ -45,27 +45,26 @@ def dataset_to_mp4(sequence, mask, mp4_path):
     logger.info('Saved video %s.' % mp4_path)
 
 
-def mask_outlines(image_base, mask_arrs=[], colors=[]):
+def mask_outlines(image, mask_arrs=[], colors=[]):
     '''Apply each of the given masks (numpy arrays) to the base image with the given colors.'''
 
     assert len(mask_arrs) == len(colors), 'One color per mask.'
-    
+
     # Convert the image to RGB.
-    if len(image_base.shape) == 2:
-        image_base = gray2rgb(image_base)
-    
+    if len(image.shape) == 2:
+        image = gray2rgb(image)
+
     # Clip outliners, scale the image to [0,1], multiply by 255.
-    image_base = np.clip(image_base, 0, np.percentile(image_base, 99))
-    image_base = (image_base - np.min(image_base)) / (np.max(image_base) - np.min(image_base))
-    
+    image = np.clip(image, 0, np.percentile(image, 99))
+    image = (image - np.min(image)) / (np.max(image) - np.min(image))
+
     # Convert each mask into a region, then take the outlined mask
     # of that region and add it to the image.
     for m, c in zip(mask_arrs, colors):
         reg = one(list(zip(*np.where(m == 1))))
-        oln = reg.mask(dims=image_base.shape[:2], fill=None, stroke=c, background='black')
+        oln = reg.mask(dims=image.shape[:2], fill=None, stroke=c, background='black')
         oln /= np.max(oln)
         yy, xx, cc = np.where(oln != 0)
-        image_base[yy,xx,cc] = oln[yy,xx,cc]
-        
-    return image_base
-    
+        image[yy, xx, cc] = oln[yy, xx, cc]
+
+    return image

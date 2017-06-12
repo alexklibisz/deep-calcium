@@ -3,26 +3,27 @@ from neurofinder import centers, shapes
 from os import path, mkdir, remove
 from scipy.misc import imread
 from skimage import measure
-from urllib2 import urlopen
 from regional import many
 from zipfile import ZipFile
 import h5py
 import json
 import logging
 import numpy as np
+import requests
 
 from deepcalcium.utils.runtime import funcname
 
-neurofinder_names = ['neurofinder.00.00', 'neurofinder.00.01', 'neurofinder.00.02',
-                     'neurofinder.00.03', 'neurofinder.00.04', 'neurofinder.00.05',
-                     'neurofinder.00.06', 'neurofinder.00.07', 'neurofinder.00.08',
-                     'neurofinder.00.09', 'neurofinder.00.10', 'neurofinder.00.11',
-                     'neurofinder.01.00', 'neurofinder.01.01', 'neurofinder.02.00',
-                     'neurofinder.02.01', 'neurofinder.03.00', 'neurofinder.04.00',
-                     'neurofinder.04.01', 'neurofinder.00.00.test', 'neurofinder.00.01.test',
-                     'neurofinder.01.00.test', 'neurofinder.01.01.test', 'neurofinder.02.00.test',
-                     'neurofinder.02.01.test', 'neurofinder.03.00.test', 'neurofinder.04.00.test',
-                     'neurofinder.04.01.test']
+neurofinder_names = sorted([
+    'neurofinder.00.00', 'neurofinder.00.01', 'neurofinder.00.02',
+    'neurofinder.00.03', 'neurofinder.00.04', 'neurofinder.00.05',
+    'neurofinder.00.06', 'neurofinder.00.07', 'neurofinder.00.08',
+    'neurofinder.00.09', 'neurofinder.00.10', 'neurofinder.00.11',
+    'neurofinder.01.00', 'neurofinder.01.01', 'neurofinder.02.00',
+    'neurofinder.02.01', 'neurofinder.03.00', 'neurofinder.04.00',
+    'neurofinder.04.01', 'neurofinder.00.00.test', 'neurofinder.00.01.test',
+    'neurofinder.01.00.test', 'neurofinder.01.01.test', 'neurofinder.02.00.test',
+    'neurofinder.02.01.test', 'neurofinder.03.00.test', 'neurofinder.04.00.test',
+    'neurofinder.04.01.test'])
 
 name_to_URL = {name: 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/%s.zip' % name
                for name in neurofinder_names}
@@ -60,8 +61,12 @@ def nf_load_hdf5(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
             logger.info('%s already downloaded.' % unzip_name)
             continue
 
-        logger.info('Downloading %s to %s.' % (zip_name, zip_path))
-        urlopen(url, zip_path)
+        logger.info('Downloading %s.' % zip_name)
+
+        download = requests.get(url)
+        logger.info('Download complete, writing to %s.' % zip_path)
+        with open(zip_path, 'wb') as zip_file:
+            zip_file.write(download.content)
 
         logger.info('Unzipping %s to %s.' % (zip_name, unzip_path))
         zip_ref = ZipFile(zip_path, 'r')
@@ -71,6 +76,7 @@ def nf_load_hdf5(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
         logger.info('Deleting %s.' % zip_name)
         remove(zip_path)
 
+    # Data types and max values.
     NP_DT_S, NP_DT_M = np.float32, np.uint8
     HDF5_DT_S, HDF5_DT_M = 'float16', 'int8'
     MAX_VAL_S = 2**16
@@ -161,6 +167,7 @@ def nf_mask_metrics(m, mp):
 
     return (p, r, i, e, c)
 
+
 def nf_submit(Mp, names, json_path):
 
     logger = logging.getLogger(funcname())
@@ -171,7 +178,7 @@ def nf_submit(Mp, names, json_path):
         # image into its regions.
         if name.startswith('neurofinder.'):
             name = '.'.join(name.split('.')[1:])
-            
+
         mp_labeled = measure.label(mp)
         if np.max(mp_labeled) == 0:
             regions = [{'coordinates': [[[0, 0]]]}]
@@ -181,12 +188,12 @@ def nf_submit(Mp, names, json_path):
                 xx, yy = np.where(mp_labeled == lbl)
                 coords = [[x, y] for x, y in zip(xx, yy)]
                 regions.append({'coordinates': coords})
-        
+
         submission.append({
             "dataset": name,
             "regions": regions
         })
-    
+
     fp = open(json_path, 'w')
     json.dump(submission, fp)
     fp.close()
