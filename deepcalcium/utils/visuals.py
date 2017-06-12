@@ -51,6 +51,7 @@ def mask_outlines(image, mask_arrs=[], colors=[]):
     '''Apply each of the given masks (numpy arrays) to the base image with the given colors.'''
 
     assert len(mask_arrs) == len(colors), 'One color per mask.'
+    logger = logging.getLogger(funcname())
 
     # Convert the image to RGB.
     if len(image.shape) == 2:
@@ -63,6 +64,9 @@ def mask_outlines(image, mask_arrs=[], colors=[]):
     # Convert each mask into a region, then take the outlined mask
     # of that region and add it to the image.
     for m, c in zip(mask_arrs, colors):
+        if np.sum(m) == 0:
+            logger.warn('Empty mask.')
+            continue
         reg = one(list(zip(*np.where(m == 1))))
         oln = reg.mask(dims=image.shape[:2], fill=None, stroke=c, background='black')
         oln /= np.max(oln)

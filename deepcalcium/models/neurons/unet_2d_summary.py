@@ -13,6 +13,8 @@ import sys
 
 from deepcalcium.utils.runtime import funcname
 from deepcalcium.datasets.nf import nf_mask_metrics
+from deepcalcium.utils.keras_helpers import HistoryPlotCallback
+from deepcalcium.utils.visuals import mask_outlines
 
 
 class ValSamplesCallback(Callback):
@@ -35,16 +37,18 @@ class ValSamplesCallback(Callback):
         s_batch, m_batch = self.s_batch, self.m_batch
         s_batch, m_batch = s_batch[:25], m_batch[:25]
         mp_batch = self.model.predict(s_batch)
-        fig, _ = plt.subplots(len(s_batch), 4, figsize=(4, int(len(s_batch) * 0.4)))
+        fig, _ = plt.subplots(len(s_batch), 3, figsize=(3, int(len(s_batch) * 0.4)))
 
         for ax in fig.axes:
             ax.axis('off')
 
         for i, (s, m, mp) in enumerate(zip(s_batch, m_batch, mp_batch)):
-            fig.axes[i * 4 + 0].imshow(s, cmap='gray')
-            fig.axes[i * 4 + 1].imshow(m, cmap='gray')
-            fig.axes[i * 4 + 2].imshow(mp, cmap='gray')
-            fig.axes[i * 4 + 3].imshow(mp.round(), cmap='gray')
+            outlined = mask_outlines(s, [m], ['blue'])
+            outlined = mask_outlines(outlined, [mp.round()], ['red'])
+            fig.axes[i * 3 + 0].imshow(outlined, cmap='gray')
+            fig.axes[i * 3 + 1].imshow(m, cmap='gray')
+            mp[0][0] = 1.
+            fig.axes[i * 3 + 2].imshow(mp, cmap='gray')
 
         plt.suptitle('Epoch %d, val dice squared = %.3lf' %
                      (epoch, logs['val_dice_squared']))
@@ -56,65 +60,64 @@ class ValSamplesCallback(Callback):
 def _build_compile_unet(window_shape, weights_path):
     '''Builds and compiles the keras UNet model. Can be replaced from outside the class if desired. Returns a compiled keras model.'''
 
-    from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, Reshape
+    from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, Reshape, UpSampling2D
     from keras.models import Model
     from keras.optimizers import Adam
     import keras.backend as K
-    
+
     logger = logging.getLogger(funcname())
 
     x = inputs = Input(window_shape)
 
     x = Reshape(window_shape + (1,))(x)
-    x = BatchNormalization()(x)
-    # x = Dropout(0.01)(x)
+    x = BatchNormalization(axis=3)(x)
 
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(16, 3, padding='same', activation='relu')(x)
+    x = Conv2D(16, 3, padding='same', activation='relu')(x)
     dc_0_out = x = Dropout(0.1)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
     dc_1_out = x = Dropout(0.1)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(128, 3, padding='same', activation='relu')(x)
-    x = Conv2D(128, 3, padding='same', activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu')(x)
     dc_2_out = x = Dropout(0.1)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(256, 3, padding='same', activation='relu')(x)
-    x = Conv2D(256, 3, padding='same', activation='relu')(x)
+    x = Conv2D(128, 3, padding='same', activation='relu')(x)
+    x = Conv2D(128, 3, padding='same', activation='relu')(x)
     dc_3_out = x = Dropout(0.1)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(512, 3, padding='same', activation='relu')(x)
-    x = Conv2D(512, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(256, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
-
-    x = concatenate([x, dc_3_out], axis=3)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
     x = Dropout(0.1)(x)
 
-    x = concatenate([x, dc_2_out], axis=3)
+    x = concatenate([x, dc_3_out], axis=3)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
     x = Dropout(0.1)(x)
 
-    x = concatenate([x, dc_1_out], axis=3)
+    x = concatenate([x, dc_2_out], axis=3)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(32, 2, strides=2, activation='relu')(x)
     x = Dropout(0.1)(x)
 
+    x = concatenate([x, dc_1_out], axis=3)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2DTranspose(16, 2, strides=2, activation='relu')(x)
+    x = Dropout(0.1)(x)
+
     x = concatenate([x, dc_0_out], axis=3)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(16, 3, padding='same', activation='relu')(x)
+    x = Conv2D(16, 3, padding='same', activation='relu')(x)
     x = Conv2D(2, 1, activation='softmax')(x)
     x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
 
@@ -129,15 +132,17 @@ def _build_compile_unet(window_shape, weights_path):
         return K.sum(K.round(yp)) / (K.sum(K.clip(yp, 1, 1)) + K.epsilon())
 
     def prec(yt, yp):
-        tp = yt * yp
-        fp = K.clip(yp - yt, 0, 1)
+        yp = K.round(yp)
+        tp = K.sum(yt * yp)
+        fp = K.sum(K.clip(yp - yt, 0, 1))
         return tp / (tp + fp + K.epsilon())
-        
+
     def reca(yt, yp):
-        tp = yt * yp
-        fn = K.clip(yt - yp, 0, 1)
+        yp = K.round(yp)
+        tp = K.sum(yt * yp)
+        fn = K.sum(K.clip(yt - yp, 0, 1))
         return tp / (tp + fn + K.epsilon())
-        
+
     def dice_squared(yt, yp):
         nmr = 2 * K.sum(yt * yp)
         dnm = K.sum(yt**2) + K.sum(yp**2) + K.epsilon()
@@ -146,7 +151,8 @@ def _build_compile_unet(window_shape, weights_path):
     def dice_squared_loss(yt, yp):
         return (1 - dice_squared(yt, yp))
 
-    model.compile(optimizer=Adam(0.0008), loss='binary_crossentropy',
+    model.compile(optimizer=Adam(0.0008),  # loss='binary_crossentropy',
+                  loss=dice_squared_loss,
                   metrics=[dice_squared, tp, pp, prec, reca])
 
     if weights_path is not None:
@@ -181,13 +187,20 @@ class UNet2DSummary(object):
             nb_steps_val=100, nb_epochs=20, prop_trn=0.8, prop_val=0.2, keras_callbacks=[]):
         '''Constructs network based on parameters and trains with the given data.'''
 
+        assert len(S) == len(M)
+        assert len(window_shape) == 2
+        assert window_shape[0] == window_shape[1]
+        assert 0 < prop_trn < 1
+        assert 0 < prop_val < 1
+
         logger = logging.getLogger(funcname())
 
         # Define, compile neural net.
         model = self.model_builder(window_shape, weights_path)
         model.summary()
-        
-        # Pre-compute summaries once to avoid problems with accessing HDF5 objects from multiple workers.
+
+        # Pre-compute summaries once to avoid problems with accessing HDF5 objects
+        # from multiple workers.
         S_summ = [self.sequence_summary_func(s) for s in S]
         M_summ = [self.mask_summary_func(m) for m in M]
 
@@ -201,14 +214,17 @@ class UNet2DSummary(object):
         gen_val = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_val,
                                      nb_max_augment=1)
         callbacks = [
+            HistoryPlotCallback('%s/history.png' % self.cpdir),
             ValSamplesCallback(gen_val, self.cpdir),
             CSVLogger('%s/training.csv' % self.cpdir),
-            ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=5,
+            ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=3,
                               cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
             ModelCheckpoint('%s/weights_loss_val.hdf5' % self.cpdir, mode='min',
                             monitor='val_loss', save_best_only=True, verbose=1),
             ModelCheckpoint('%s/weights_loss_trn.hdf5' % self.cpdir, mode='min',
-                            monitor='loss', save_best_only=True, verbose=1)
+                            monitor='loss', save_best_only=True, verbose=0),
+            EarlyStopping(monitor='val_loss', min_delta=1e-3,
+                          patience=10, verbose=1, mode='min')
 
         ] + keras_callbacks
 
@@ -233,8 +249,11 @@ class UNet2DSummary(object):
         def stretch(a, b):
             hw_, ww_ = rng.randint(hw, hw * 1.3), np.random.randint(ww, ww * 1.3)
             resize = lambda x: transform.resize(x, (hw_, ww_), preserve_range=True)
-            crop = lambda x: x[:hw, :ww]
-            return crop(resize(a)), crop(resize(b).round())
+            a, b = resize(a), resize(b)
+            y0 = rng.randint(0, a.shape[0] + 1 - hw)
+            x0 = rng.randint(0, a.shape[1] + 1 - ww)
+            y1, x1 = y0 + hw, x0 + ww
+            return a[y0:y1, x0:x1], b[y0:y1, x0:x1]
 
         def brightness(a, b):
             std = np.std(a)
@@ -245,9 +264,9 @@ class UNet2DSummary(object):
             lambda a, b: (a, b),                      # Identity.
             lambda a, b: (a[:, ::-1], b[:, ::-1]),    # Horizontal flip.
             lambda a, b: (a[::-1, :], b[::-1, :]),    # Vertical flip.
-            lambda a, b: brightness(a, b),            # Brightness adjustment.
             lambda a, b: rot(a, b),                   # Free rotation.
-            lambda a, b: stretch(a, b)                # Make larger and crop.
+            lambda a, b: stretch(a, b),               # Make larger and crop.
+            lambda a, b: brightness(a, b),            # Brightness adjustment.
         ]
 
         # Pre-compute neuron locations for faster sampling.
@@ -275,22 +294,25 @@ class UNet2DSummary(object):
                 # Dimensions. Height constrained by y range.
                 hs, ws = s.shape
                 hsmin, hsmax = get_y_range(hs)
-                
+
                 # Pick a random neuron location within this mask to center the window.
                 cy, cx = neuron_locs[ds_idx][rng.randint(0, len(neuron_locs[ds_idx]))]
 
                 # Window boundaries with a random offset and extra care to stay in bounds.
-                cy = min(max(hsmin, cy + rng.randint(-20, 20)), hsmax)
-                cx = min(max(0, cx + rng.randint(-20, 20)), ws)
+                cy = min(max(hsmin, cy + rng.randint(-5, 5)), hsmax)
+                cx = min(max(0, cx + rng.randint(-5, 5)), ws)
                 y0 = max(hsmin, int(cy - (hw / 2)))
                 y1 = min(y0 + hw, hsmax)
                 x0 = max(0, int(cx - (ww / 2)))
                 x1 = min(x0 + ww, ws)
 
+                # Double check.
+                assert hsmin <= y0 <= y1 <= hsmax
+                assert 0 <= x0 <= x1 <= ws
+
                 # Slice and store the window.
-                # print(y0, y1, x0, x1, m[y0:y1,x0:x1].shape)
-                m_batch[b_idx,:y1-y0,:x1-x0] = m[y0:y1, x0:x1]
-                s_batch[b_idx,:y1-y0,:x1-x0] = s[y0:y1, x0:x1]
+                m_batch[b_idx, :y1 - y0, :x1 - x0] = m[y0:y1, x0:x1]
+                s_batch[b_idx, :y1 - y0, :x1 - x0] = s[y0:y1, x0:x1]
 
                 # Random augmentations.
                 nb_augment = rng.randint(0, nb_max_augment + 1)
@@ -298,7 +320,7 @@ class UNet2DSummary(object):
                     s_batch[b_idx], m_batch[b_idx] = aug(s_batch[b_idx], m_batch[b_idx])
 
             yield s_batch, m_batch
-    
+
     def evaluate(self, S, M, weights_path=None, window_shape=(512, 512), save=False):
         '''Evaluates predicted masks vs. true masks for the given sequences..'''
 
