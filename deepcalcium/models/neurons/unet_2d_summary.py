@@ -197,10 +197,9 @@ class UNet2DSummary(object):
         gen_trn = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_trn,
                                      nb_max_augment=5)
 
-        gyr_val = lambda hs: (int(hs * (1 - prop_trn)), hs)
+        gyr_val = lambda hs: (hs - int(hs * prop_val), hs)
         gen_val = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_val,
                                      nb_max_augment=1)
-
         callbacks = [
             ValSamplesCallback(gen_val, self.cpdir),
             CSVLogger('%s/training.csv' % self.cpdir),
@@ -253,11 +252,15 @@ class UNet2DSummary(object):
 
         # Pre-compute neuron locations for faster sampling.
         # TODO: adjust for the min/max y coordinates here.
-        neuron_locs = [zip(*np.where(m == 1)) for m in M_summ]
+        neuron_locs = []
+        for m in M_summ:
+            hsmin, hsmax = get_y_range(m.shape[0])
+            neuron_locs.append(zip(*np.where(m[hsmin:hsmax, :] == 1)))
+
+        # Cycle to sequentially sample datasets.
+        ds_idxs = cycle(np.arange(len(S_summ)))
 
         while True:
-
-            s_idxs = cycle(rng.choice(np.arange(len(S_summ)), len(S_summ)))
 
             # Empty batches to fill.
             s_batch = np.zeros((batch_size, hw, ww), dtype=np.float32)
@@ -265,27 +268,29 @@ class UNet2DSummary(object):
 
             for b_idx in range(batch_size):
 
-                # Pick datasets sequentially.
-                ds_idx = next(s_idxs)
+                # Pick from next dataset.
+                ds_idx = next(ds_idxs)
                 s, m = S_summ[ds_idx], M_summ[ds_idx]
 
                 # Dimensions. Height constrained by y range.
                 hs, ws = s.shape
                 hsmin, hsmax = get_y_range(hs)
-
+                
                 # Pick a random neuron location within this mask to center the window.
                 cy, cx = neuron_locs[ds_idx][rng.randint(0, len(neuron_locs[ds_idx]))]
 
                 # Window boundaries with a random offset and extra care to stay in bounds.
                 cy = min(max(hsmin, cy + rng.randint(-20, 20)), hsmax)
                 cx = min(max(0, cx + rng.randint(-20, 20)), ws)
-                y0 = min(max(0, int(cy - (hw / 2))), hsmax - 1 - hw)
-                x0 = min(max(0, int(cx - (ww / 2))), ws - 1 - ww)
-                y1, x1 = y0 + hw, x0 + ww
+                y0 = max(hsmin, int(cy - (hw / 2)))
+                y1 = min(y0 + hw, hsmax)
+                x0 = max(0, int(cx - (ww / 2)))
+                x1 = min(x0 + ww, ws)
 
-                # Slice the window.
-                m_batch[b_idx] = m[y0:y1, x0:x1]
-                s_batch[b_idx] = s[y0:y1, x0:x1]
+                # Slice and store the window.
+                # print(y0, y1, x0, x1, m[y0:y1,x0:x1].shape)
+                m_batch[b_idx,:y1-y0,:x1-x0] = m[y0:y1, x0:x1]
+                s_batch[b_idx,:y1-y0,:x1-x0] = s[y0:y1, x0:x1]
 
                 # Random augmentations.
                 nb_augment = rng.randint(0, nb_max_augment + 1)
@@ -293,7 +298,7 @@ class UNet2DSummary(object):
                     s_batch[b_idx], m_batch[b_idx] = aug(s_batch[b_idx], m_batch[b_idx])
 
             yield s_batch, m_batch
-
+    
     def evaluate(self, S, M, weights_path=None, window_shape=(512, 512), save=False):
         '''Evaluates predicted masks vs. true masks for the given sequences..'''
 
