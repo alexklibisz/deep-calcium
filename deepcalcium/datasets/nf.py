@@ -35,16 +35,17 @@ def nf_load_hdf5(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
     logger = logging.getLogger(funcname())
 
     # Convert special names 'all', 'all_train', and 'all_test'.
-    if names.lower() == 'all':
+    if type(names) == str and names.lower() == 'all':
         names = neurofinder_names
-    elif names.lower() == 'all_train':
+    elif type(names) == str and names.lower() == 'all_train':
         _ = [n for n in neurofinder_names if '.test' not in n]
         names = sorted(_)
-    elif names.lower() == 'all_test':
+    elif type(names) == str and names.lower() == 'all_test':
         _ = [n for n in neurofinder_names if '.test' in n]
         names = sorted(_)
-    else:
+    elif type(names) == str:
         names = names.split(',')
+    assert type(names) == list
 
     if not path.exists(datasets_dir):
         mkdir(datasets_dir)

@@ -7,18 +7,20 @@ import logging
 from deepcalcium.utils.runtime import funcname
 
 
-def dataset_to_mp4(sequence, mask, mp4_path):
-    '''Converts the given sequence to an mp4 video. If the mask is given, adds an outline around each neuron.'''
+def dataset_to_mp4(series, mask, mp4_path):
+    '''Converts the given series to an mp4 video. If the mask is given, adds an outline around each neuron.'''
 
     logger = logging.getLogger(funcname())
     logger.info('Preparing video %s.' % mp4_path)
 
     # If mask is given make a color video with neuron centers marked.
     if mask is not None:
-        s = sequence.get('s')[...]
+
+        s = series.get('s')[...]
         m = mask.get('m')[...]
 
-        video = video * 1. / 255.
+        assert np.max(s) <= 1.
+        s = (s - np.min(s)) / (np.max(s) - np.min(s)) * 255
 
         video = np.zeros(s.shape + (3,), dtype=np.uint8)
         video[:, :, :, 0] = s
@@ -36,12 +38,12 @@ def dataset_to_mp4(sequence, mask, mp4_path):
 
     else:
 
-        s = sequence.get('s')
+        s = series.get('s')
         video = s[...]
         video = video * 1. / 255.
         video = video.astype(np.uint8)
 
-    vwrite(mp4_path, video)
+    vwrite(mp4_path.encode('ascii'), video)
     logger.info('Saved video %s.' % mp4_path)
 
 

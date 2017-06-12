@@ -6,15 +6,16 @@ import logging
 import sys
 sys.path.append('.')
 
-from deepcalcium.datasets.nf import load_neurofinder, neurofinder_names
+from deepcalcium.datasets.nf import nf_load_hdf5, neurofinder_names
 from deepcalcium.utils.visuals import dataset_to_mp4
 
 logging.basicConfig(level=logging.INFO)
 
-for name in neurofinder_names:
-    S, M = load_neurofinder(name)
+name = ['neurofinder.04.00', 'neurofinder.04.01']
+S, M = nf_load_hdf5(name)
+for s, m in zip(S, M):
     mp4_path = s.filename.replace('.hdf5', '.mp4')
     if not exists(mp4_path):
-        dataset_to_mp4(S[0], M[0], mp4_path)
+        dataset_to_mp4(s, m, mp4_path)
     s.close()
     m.close()
