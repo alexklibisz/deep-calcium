@@ -151,21 +151,20 @@ def nf_mask_metrics(m, mp):
         '''Convert a mask to a regional many object so it can be measured 
         using the neurofinder library.'''
         msklbl = measure.label(msk)
-        if np.max(msklbl) == 0:
-            coords = [[[0, 0], [1, 1]], [[0, 0], [1, 1]]]
-        else:
-            coords = []
-            for lbl in range(1, np.max(msklbl)):
-                yy, xx = np.where(msklbl == lbl)
-                coords.append([[y, x] for y, x in zip(yy, xx)])
+        coords = []
+        for lbl in range(1, np.max(msklbl) + 1):
+            yy, xx = np.where(msklbl == lbl)
+            coords.append([[y, x] for y, x in zip(yy, xx)])
         return many(coords)
-
+        
+    if np.sum(mp.round()) == 0:
+        return 0., 0., 0., 0., 0.
+        
     m_reg = mask_to_regional(m)
     mp_reg = mask_to_regional(mp)
     r, p = centers(mp_reg, m_reg)
     i, e = shapes(mp_reg, m_reg)
     c = 2. * (r * p) / (r + p)
-
     return (p, r, i, e, c)
 
 

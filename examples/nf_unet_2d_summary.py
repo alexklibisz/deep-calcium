@@ -19,7 +19,7 @@ def training(dataset_name, weights_path):
 
     # Load all sequences and masks as hdf5 File objects.
     S_trn, M_trn = nf_load_hdf5(dataset_name)
-
+    
     # Remove low-quality datasets.
     bad_names = ['neurofinder.04.00']
     S_trn = [s for s in S_trn if s.attrs['name'] not in bad_names]
@@ -33,7 +33,7 @@ def training(dataset_name, weights_path):
         S_trn, M_trn,               # hdf5 sequences and masks.
         weights_path=weights_path,  # Pre-trained weights.
         window_shape=(96, 96),      # Input/output windows to the network.
-        batch_size=100,             # Batch size - adjust based on GPU.
+        batch_size=32,              # Batch size - adjust based on GPU.
         nb_steps_trn=150,           # Training batches / epoch.
         nb_steps_val=100,           # Validation batches / epoch.
         nb_epochs=50,               # Epochs.

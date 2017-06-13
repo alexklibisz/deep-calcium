@@ -1,3 +1,4 @@
+from __future__ import division
 from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, EarlyStopping, CSVLogger, ReduceLROnPlateau
 from math import ceil
@@ -16,6 +17,83 @@ from deepcalcium.datasets.nf import nf_mask_metrics
 from deepcalcium.utils.keras_helpers import HistoryPlotCallback
 from deepcalcium.utils.visuals import mask_outlines
 
+class ValNFMetricsCallback(Callback):
+    '''Compute neurofinder metrics on validation data.'''
+
+    def __init__(self, S_summ, M_summ, names, window_shape, get_y_range, file_name):
+        '''Break S_summ and M_summ into windows stored in batches. Each (s, m) gets
+        a single batch. Batch indexing corresponds to names list.'''
+        super(Callback, self).__init__()
+        self.names = names
+        self.S_summ = S_summ
+        self.M_summ = M_summ
+        self.file_name = file_name
+        self.s_batches = []
+        self.m_batches = []
+        self.batch_coords = []
+        self.history = { name: {'prec': [], 'reca': []} for name in self.names }
+        pad = lambda x: np.pad(x, ((0, window_shape[0] - x.shape[0]), \
+                              (0, window_shape[1] - x.shape[1])), mode='reflect')
+        for s, m in zip(S_summ, M_summ):
+            ymin, ymax = get_y_range(s.shape[0])
+            s, m = s[ymin:ymax,:].copy(), m[ymin:ymax,:].copy()
+            batch_size = int(ceil(s.shape[0] / window_shape[0]) * ceil(s.shape[1] / window_shape[1]))
+            s_batch, m_batch = np.zeros((batch_size,) + window_shape), np.zeros((batch_size,) + window_shape)
+            coords = []
+            for y0 in xrange(0, s.shape[0], window_shape[0]):
+                for x0 in xrange(0, s.shape[1], window_shape[1]):
+                    y1, x1 = y0 + window_shape[0], x0 + window_shape[1]
+                    s_batch[len(coords)] = pad(s[y0:y1,x0:x1])
+                    m_batch[len(coords)] = pad(m[y0:y1,x0:x1])
+                    coords.append((y0,y1,x0,x1))
+            self.s_batches.append(s_batch)
+            self.m_batches.append(m_batch)
+            self.batch_coords.append(coords)
+        
+    def on_epoch_end(self, epoch, logs={}):
+        '''Prediction on s_batches and reconstruction to compute metrics.'''
+        logger = logging.getLogger(funcname())
+        
+        import matplotlib
+        matplotlib.use('agg')
+        import matplotlib.pyplot as plt
+        import matplotlib.colors as mcolors
+        
+        # Reconstruct windows and compute the metrics.
+        for idx in xrange(len(self.names)):
+            name = self.names[idx]
+            s = self.S_summ[idx]
+            m = self.M_summ[idx]
+            s_batch = self.s_batches[idx]
+            m_batch = self.m_batches[idx]
+            coords = self.batch_coords[idx]
+            mp_batch = self.model.predict(s_batch)
+            mp = np.zeros_like(m)
+            for mp_wdw, (y0, y1, x0, x1) in zip(mp_batch, coords):
+                shape = mp[y0:y1,x0:x1].shape
+                mp[y0:y1,x0:x1] = mp_wdw[:shape[0],:shape[1]]
+            prec, reca, incl, excl, comb = nf_mask_metrics(m, mp)
+            print(np.sum(m), np.sum(mp))
+            logger.info('%s: %-6.3lf %-6.3lf %-6.3lf %-6.3lf %-6.3lf' % \
+                        (name, prec, reca, incl, excl, comb))
+            self.history[name]['prec'].append(prec)
+            self.history[name]['reca'].append(reca)
+            
+            
+        return 
+        
+        # Plot history.
+        linestyles = cycle(['-', '--'])
+        colors = cycle(mcolors.cnames)
+        plt.figure(figsize=(15, 8))
+        for name in self.names:
+            color=next(colors)
+            plt.plot(self.history[name]['prec'], label='%s prec' % name, color=color, linestyle='-')
+            plt.plot(self.history[name]['reca'], label='%s reca' % name, color=color, linestyle='--')
+            plt.legend(ncol=2, loc='lower right')
+            plt.ylim(0., 1.)
+        plt.savefig(self.file_name, dpi=300)
+        plt.close()
 
 class ValSamplesCallback(Callback):
     '''Save files with the validation samples and their predicted masks.'''
@@ -72,52 +150,52 @@ def _build_compile_unet(window_shape, weights_path):
     x = Reshape(window_shape + (1,))(x)
     x = BatchNormalization(axis=3)(x)
 
-    x = Conv2D(16, 3, padding='same', activation='relu')(x)
-    x = Conv2D(16, 3, padding='same', activation='relu')(x)
-    dc_0_out = x = Dropout(0.1)(x)
-
-    x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    dc_1_out = x = Dropout(0.1)(x)
+    dc_0_out = x = Dropout(0.0)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    dc_2_out = x = Dropout(0.1)(x)
+    dc_1_out = x = Dropout(0.0)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
-    dc_3_out = x = Dropout(0.1)(x)
+    dc_2_out = x = Dropout(0.0)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
+    x = Conv2D(256, 3, padding='same', activation='relu')(x)
+    x = Conv2D(256, 3, padding='same', activation='relu')(x)
+    dc_3_out = x = Dropout(0.0)(x)
+
+    x = MaxPooling2D(2, strides=2)(x)
+    x = Conv2D(512, 3, padding='same', activation='relu')(x)
+    x = Conv2D(512, 3, padding='same', activation='relu')(x)
+    x = Conv2DTranspose(256, 2, strides=2, activation='relu')(x)
+    x = Dropout(0.0)(x)
+
+    x = concatenate([x, dc_3_out], axis=3)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
+    x = Dropout(0.0)(x)
 
-    x = concatenate([x, dc_3_out], axis=3)
+    x = concatenate([x, dc_2_out], axis=3)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
+    x = Dropout(0.0)(x)
 
-    x = concatenate([x, dc_2_out], axis=3)
+    x = concatenate([x, dc_1_out], axis=3)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(32, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
-
-    x = concatenate([x, dc_1_out], axis=3)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(16, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
+    x = Dropout(0.0)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
-    x = Conv2D(16, 3, padding='same', activation='relu')(x)
-    x = Conv2D(16, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu')(x)
     x = Conv2D(2, 1, activation='softmax')(x)
     x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
 
@@ -149,7 +227,7 @@ def _build_compile_unet(window_shape, weights_path):
         return (nmr / dnm)
 
     def dice_squared_loss(yt, yp):
-        return (1 - dice_squared(yt, yp))
+        return (1 - dice_squared(yt, yp)) + K.clip(tp(yt, yp) - pp(yt, yp), 0, 1)
 
     model.compile(optimizer=Adam(0.0008),  # loss='binary_crossentropy',
                   loss=dice_squared_loss,
@@ -213,18 +291,25 @@ class UNet2DSummary(object):
         gyr_val = lambda hs: (hs - int(hs * prop_val), hs)
         gen_val = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_val,
                                      nb_max_augment=1)
+                                     
+        names = [s.attrs['name'] for s in S]        
+                                     
         callbacks = [
             HistoryPlotCallback('%s/history.png' % self.cpdir),
+            ValNFMetricsCallback(S_summ, M_summ, names, window_shape, gyr_val, \
+                                '%s/history_nf_metrics.png' % self.cpdir),
             ValSamplesCallback(gen_val, self.cpdir),
             CSVLogger('%s/training.csv' % self.cpdir),
-            ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=3,
-                              cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
             ModelCheckpoint('%s/weights_loss_val.hdf5' % self.cpdir, mode='min',
                             monitor='val_loss', save_best_only=True, verbose=1),
             ModelCheckpoint('%s/weights_loss_trn.hdf5' % self.cpdir, mode='min',
                             monitor='loss', save_best_only=True, verbose=0),
-            EarlyStopping(monitor='val_loss', min_delta=1e-3,
-                          patience=10, verbose=1, mode='min')
+            ReduceLROnPlateau(monitor='dice_squared', factor=0.5, patience=3,
+                              cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
+            #ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=3,
+            #                  cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
+            #EarlyStopping(monitor='val_loss', min_delta=1e-3,
+            #              patience=10, verbose=1, mode='min')
 
         ] + keras_callbacks
 
@@ -255,22 +340,15 @@ class UNet2DSummary(object):
             y1, x1 = y0 + hw, x0 + ww
             return a[y0:y1, x0:x1], b[y0:y1, x0:x1]
 
-        def brightness(a, b):
-            std = np.std(a)
-            adj = rng.uniform(-std, std)
-            return (np.clip(a + adj, 0, 1), b)
-
         augment_funcs = [
             lambda a, b: (a, b),                      # Identity.
             lambda a, b: (a[:, ::-1], b[:, ::-1]),    # Horizontal flip.
             lambda a, b: (a[::-1, :], b[::-1, :]),    # Vertical flip.
             lambda a, b: rot(a, b),                   # Free rotation.
             lambda a, b: stretch(a, b),               # Make larger and crop.
-            lambda a, b: brightness(a, b),            # Brightness adjustment.
         ]
 
         # Pre-compute neuron locations for faster sampling.
-        # TODO: adjust for the min/max y coordinates here.
         neuron_locs = []
         for m in M_summ:
             hsmin, hsmax = get_y_range(m.shape[0])
