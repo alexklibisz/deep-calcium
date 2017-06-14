@@ -14,7 +14,7 @@ import sys
 
 from deepcalcium.utils.runtime import funcname
 from deepcalcium.datasets.nf import nf_mask_metrics
-from deepcalcium.utils.keras_helpers import HistoryPlotCallback
+from deepcalcium.utils.keras_helpers import MetricsPlotCallback
 from deepcalcium.utils.visuals import mask_outlines
 
 
@@ -41,7 +41,8 @@ class ValNFMetricsCallback(Callback):
 
         # Split into batches of windows and lists of their coordinates.
         for s, m in zip(self.S_summ, self.M_summ):
-            batch_size = int(ceil(s.shape[0] / window_shape[0]) * ceil(s.shape[1] / window_shape[1]))
+            batch_size = int(ceil(s.shape[0] / window_shape[0])
+                             * ceil(s.shape[1] / window_shape[1]))
             s_batch = np.zeros((batch_size,) + window_shape)
             coords = []
             for y0 in xrange(0, s.shape[0], window_shape[0]):
@@ -60,13 +61,14 @@ class ValNFMetricsCallback(Callback):
         matplotlib.use('agg')
         import matplotlib.pyplot as plt
 
-        nb_col = 4
-        fig, _ = plt.subplots(len(self.names), nb_col, figsize=(10, len(self.names) * 1.5))
-        logs['val_prec'] = 0.
-        logs['val_reca'] = 0.
-        logs['val_comb'] = 0.
+        cols = 4
+        fig, _ = plt.subplots(len(self.names), cols,
+                              figsize=(10, len(self.names) * 1.5))
+        logs['val_nf_prec'] = 0.
+        logs['val_nf_reca'] = 0.
+        logs['val_nf_comb'] = 0.
 
-        # Predict batch, reconstruct window, and compute the metrics.
+        # Predict batch, reconstruct window, compute the metrics, make and save plots.
         for idx in xrange(len(self.names)):
             name = self.names[idx]
             s = self.S_summ[idx]
@@ -79,34 +81,40 @@ class ValNFMetricsCallback(Callback):
                 mp[y0:y1, x0:x1] = mp_wdw[:shape[0], :shape[1]]
 
             prec, reca, incl, excl, comb = nf_mask_metrics(m, mp.round())
-            logs['val_prec'] += prec / len(self.names)
-            logs['val_reca'] += reca / len(self.names)
-            logs['val_comb'] += comb / len(self.names)
+            logs['val_nf_prec'] += prec / len(self.names)
+            logs['val_nf_reca'] += reca / len(self.names)
+            logs['val_nf_comb'] += comb / len(self.names)
             logger.info('%s: prec=%-6.3lf reca=%-6.3lf incl=%-6.3lf excl=%-6.3lf comb=%-6.3lf' %
                         (name, prec, reca, incl, excl, comb))
 
             outlined = mask_outlines(s, [m], ['blue'])
             outlined = mask_outlines(outlined, [mp.round()], ['red'])
-            fig.axes[nb_col * idx + 0].imshow(outlined)
-            fig.axes[nb_col * idx + 0].axis('off')
-            fig.axes[nb_col * idx + 1].set_title('%s: p=%.3lf, r=%.3lf, c=%.3lf' % (name, prec, reca, comb), size=8)
-            fig.axes[nb_col * idx + 1].imshow(m, cmap='gray')
-            fig.axes[nb_col * idx + 1].axis('off')
-            fig.axes[nb_col * idx + 2].imshow(mp, cmap='gray')
-            fig.axes[nb_col * idx + 2].axis('off')
+            fig.axes[cols * idx + 0].imshow(outlined)
+            fig.axes[cols * idx + 0].axis('off')
+            fig.axes[cols * idx + 1].set_title('%s: p=%.3lf, r=%.3lf, c=%.3lf'
+                                               % (name, prec, reca, comb), size=8)
+            fig.axes[cols * idx + 1].imshow(m, cmap='gray')
+            fig.axes[cols * idx + 1].axis('off')
+            fig.axes[cols * idx + 2].imshow(mp.round(), cmap='gray')
+            fig.axes[cols * idx + 2].axis('off')
 
             # Histogram of activations for neuron pixels.
             yy, xx = np.where(m == 1)
-            act_nrn = mp[yy, xx]
-            fig.axes[nb_col * idx + 3].hist(act_nrn[np.where(act_nrn >= 0.5)], color='red', alpha=0.4, label='TP')
-            fig.axes[nb_col * idx + 3].hist(act_nrn[np.where(act_nrn < 0.5)], color='black', alpha=0.4, label='FN')
-            fig.axes[nb_col * idx + 3].set_xlim(0., 1.)
-            fig.axes[nb_col * idx + 3].tick_params(axis='y', labelsize=6)
-            fig.axes[nb_col * idx + 3].tick_params(axis='x', labelsize=6)
-            fig.axes[nb_col * idx + 3].legend()
+            act = mp[yy, xx]
+            tp = act[np.where(act >= 0.5)]
+            fn = act[np.where(act < 0.5)]
+            fig.axes[cols * idx + 3].hist(tp, color='red', label='TP')
+            fig.axes[cols * idx + 3].hist(fn, color='black', label='FN')
+            fig.axes[cols * idx + 3].set_xlim(0., 1.)
+            fig.axes[cols * idx + 3].tick_params(axis='y', labelsize=6)
+            fig.axes[cols * idx + 3].tick_params(axis='x', labelsize=6)
+            fig.axes[cols * idx + 3].legend()
+
+        logger.info('mean prec=%-6.3lf, mean reca=%-6.3lf, mean comb=%-6.3lf' %
+                    (logs['val_nf_prec'], logs['val_nf_reca'], logs['val_nf_comb']))
 
         plt.savefig('%s/samples_val_%03d.png' % (self.cpdir, epoch), dpi=300)
-        plt.savefig('%s/samples_latest.png' % self.cpdir, dpi=300)
+        plt.savefig('%s/samples_val_latest.png' % self.cpdir, dpi=300)
         plt.close()
 
 
@@ -127,46 +135,43 @@ def _build_compile_unet(window_shape, weights_path):
 
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    dc_0_out = x = Dropout(0.0)(x)
+    dc_0_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    dc_1_out = x = Dropout(0.0)(x)
+    dc_1_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
-    dc_2_out = x = Dropout(0.0)(x)
+    dc_2_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
-    dc_3_out = x = Dropout(0.0)(x)
+    dc_3_out = x = Dropout(0.5)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
     x = Conv2D(512, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(256, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.0)(x)
+    x = Dropout(0.5)(x)
 
     x = concatenate([x, dc_3_out], axis=3)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.0)(x)
 
     x = concatenate([x, dc_2_out], axis=3)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.0)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(32, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.0)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
@@ -204,10 +209,11 @@ def _build_compile_unet(window_shape, weights_path):
         return (nmr / dnm)
 
     def dice_squared_loss(yt, yp):
-        return (1 - dice_squared(yt, yp)) + K.abs(ytpos(yt, yp) - yppos(yt, yp))
+        return (1 - dice_squared(yt, yp))  # + K.abs(ytpos(yt, yp) - yppos(yt, yp))
 
-    model.compile(optimizer=Adam(0.0008),  # loss='binary_crossentropy',
+    model.compile(optimizer=Adam(0.001),
                   loss=dice_squared_loss,
+                  # loss='binary_crossentropy',
                   metrics=[dice_squared, ytpos, yppos, prec, reca])
 
     if weights_path is not None:
@@ -238,8 +244,8 @@ class UNet2DSummary(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(self, S, M, weights_path=None, window_shape=(96, 96), batch_size=32, nb_steps_trn=150,
-            nb_steps_val=100, nb_epochs=20, prop_trn=0.8, prop_val=0.2, keras_callbacks=[]):
+    def fit(self, S, M, weights_path=None, window_shape=(96, 96), batch_size=32, nb_steps_trn=200,
+            nb_epochs=20, prop_trn=0.8, prop_val=0.2, keras_callbacks=[]):
         '''Constructs network based on parameters and trains with the given data.'''
 
         assert len(S) == len(M)
@@ -266,29 +272,26 @@ class UNet2DSummary(object):
                                      nb_max_augment=5)
 
         gyr_val = lambda hs: (hs - int(hs * prop_val), hs)
-        gen_val = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_val)
-
         names = [s.attrs['name'] for s in S]
 
         callbacks = [
-            HistoryPlotCallback('%s/history.png' % self.cpdir),
-            ValNFMetricsCallback(S_summ, M_summ, names, window_shape, gyr_val, self.cpdir),
-            CSVLogger('%s/training.csv' % self.cpdir),
-            ModelCheckpoint('%s/weights_loss_val.hdf5' % self.cpdir, mode='min',
-                            monitor='val_loss', save_best_only=True, verbose=1),
+            ValNFMetricsCallback(S_summ, M_summ, names,
+                                 window_shape, gyr_val, self.cpdir),
+            CSVLogger('%s/metrics.csv' % self.cpdir),
+            MetricsPlotCallback('%s/metrics.png' % self.cpdir,
+                                '%s/metrics.csv' % self.cpdir),
+            ModelCheckpoint('%s/weights_nf_comb_val.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_comb', save_best_only=True, verbose=1),
             ModelCheckpoint('%s/weights_loss_trn.hdf5' % self.cpdir, mode='min',
                             monitor='loss', save_best_only=True, verbose=0),
-            ReduceLROnPlateau(monitor='dice_squared', factor=0.5, patience=3,
+            ReduceLROnPlateau(monitor='val_nf_comb', factor=0.5, patience=3,
                               cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
-            ReduceLROnPlateau(monitor='val_loss', factor=0.8, patience=3,
-                              cooldown=2, min_lr=1e-4, verbose=1, mode='min'),
-            EarlyStopping(monitor='val_loss', min_delta=1e-3,
-                          patience=10, verbose=1, mode='min')
+            EarlyStopping(monitor='val_nf_comb', min_delta=1e-3,
+                          patience=10, verbose=1, mode='max')
 
         ] + keras_callbacks
 
         model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
-                            validation_data=gen_val, validation_steps=nb_steps_val,
                             callbacks=callbacks, verbose=1, max_q_size=100)
 
     def batch_gen_fit(self, S_summ, M_summ, batch_size, window_shape, get_y_range, nb_max_augment=0):

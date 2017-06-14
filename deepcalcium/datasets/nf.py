@@ -1,6 +1,6 @@
 from glob import glob
 from neurofinder import centers, shapes
-from os import path, mkdir, remove
+from os import path, mkdir, remove, rename
 from scipy.misc import imread
 from skimage import measure
 from regional import many
@@ -94,8 +94,13 @@ def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expandus
 
         logger.info('Preparing hdf5 files for %s.' % name)
 
+        old_path_s = '%s/%s/sequence.hdf5' % (datasets_dir, name)
+        new_path_s = '%s/%s/series.hdf5' % (datasets_dir, name)
+        if path.exists(old_path_s) and not path.exists(new_path_s):
+            rename(old_path_s, new_path_s)
+
         # Create and populate the hdf5 sequence.
-        path_s = '%s/%s/series.hdf5' % (datasets_dir, name)
+        path_s = new_path_s
         if not path.exists(path_s):
             logger.info('Populating %s.' % path_s)
             sf = h5py.File(path_s, 'w')
