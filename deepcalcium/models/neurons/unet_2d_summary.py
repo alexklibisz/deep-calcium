@@ -68,6 +68,8 @@ class ValNFMetricsCallback(Callback):
         logs['val_nf_reca'] = 0.
         logs['val_nf_comb'] = 0.
 
+        comb_vals = []
+
         # Predict batch, reconstruct window, compute the metrics, make and save plots.
         for idx in xrange(len(self.names)):
             name = self.names[idx]
@@ -81,6 +83,7 @@ class ValNFMetricsCallback(Callback):
                 mp[y0:y1, x0:x1] = mp_wdw[:shape[0], :shape[1]]
 
             prec, reca, incl, excl, comb = nf_mask_metrics(m, mp.round())
+            comb_vals.append(comb)
             logs['val_nf_prec'] += prec / len(self.names)
             logs['val_nf_reca'] += reca / len(self.names)
             logs['val_nf_comb'] += comb / len(self.names)
@@ -110,8 +113,10 @@ class ValNFMetricsCallback(Callback):
             fig.axes[cols * idx + 3].tick_params(axis='x', labelsize=6)
             fig.axes[cols * idx + 3].legend()
 
-        logger.info('mean prec=%-6.3lf, mean reca=%-6.3lf, mean comb=%-6.3lf' %
-                    (logs['val_nf_prec'], logs['val_nf_reca'], logs['val_nf_comb']))
+        logs['val_nf_comb_adj'] = np.mean(comb_vals) * (1 - np.std(comb_vals))
+
+        logger.info('prec mean=%-6.3lf, reca mean=%-6.3lf, comb mean=%-6.3lf, comb std=%-6.3lf' %
+                    (logs['val_nf_prec'], logs['val_nf_reca'], logs['val_nf_comb'], np.std(comb_vals)))
 
         plt.savefig('%s/samples_val_%03d.png' % (self.cpdir, epoch), dpi=300)
         plt.savefig('%s/samples_val_latest.png' % self.cpdir, dpi=300)
@@ -233,6 +238,7 @@ def _build_compile_unet(window_shape, weights_path):
 
 
 def _summarize_sequence(s):
+    assert 'summary_mean' in s
     return s.get('summary_mean')[...]
 
 
@@ -289,8 +295,10 @@ class UNet2DSummary(object):
             CSVLogger('%s/metrics.csv' % self.cpdir),
             MetricsPlotCallback('%s/metrics.png' % self.cpdir,
                                 '%s/metrics.csv' % self.cpdir),
-            ModelCheckpoint('%s/weights_nf_comb_val.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_comb', save_best_only=True, verbose=1),
+            ModelCheckpoint('%s/weights_val_nf_comb.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_comb', save_best_only=True, verbose=0),
+            ModelCheckpoint('%s/weights_val_nf_comb_adj.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_comb_adj', save_best_only=True, verbose=1),
             ModelCheckpoint('%s/weights_loss_trn.hdf5' % self.cpdir, mode='min',
                             monitor='loss', save_best_only=True, verbose=0),
             ReduceLROnPlateau(monitor='val_nf_comb', factor=0.5, patience=3,
