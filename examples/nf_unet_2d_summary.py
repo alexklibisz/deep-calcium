@@ -35,7 +35,7 @@ def training(dataset_name, weights_path):
         window_shape=(128, 128),    # Input/output windows to the network.
         batch_size=20,              # Batch size - adjust based on GPU.
         nb_steps_trn=250,           # Training batches / epoch.
-        nb_epochs=25,               # Epochs.
+        nb_epochs=40,               # Epochs.
         keras_callbacks=[],         # Custom keras callbacks.
         prop_trn=0.75,              # Proportion of height for training, validation.
         prop_val=0.25,

@@ -25,19 +25,25 @@ class ValNFMetricsCallback(Callback):
         '''Break S_summ and M_summ into windows stored in batches. Each (s, m) gets
         a single batch. Batch indexing corresponds to names list.'''
         super(Callback, self).__init__()
-        self.names = names
         self.cpdir = cpdir
         self.s_batches = []
         self.batch_coords = []
         pad = lambda x: np.pad(x, ((0, window_shape[0] - x.shape[0]),
                                    (0, window_shape[1] - x.shape[1])), mode='reflect')
 
-        # Crop the s and m summaries.
-        self.S_summ, self.M_summ = [], []
-        for s, m in zip(S_summ, M_summ):
+        # Crop and flip the s and m summaries.
+        self.names, self.S_summ, self.M_summ = [], [], []
+        for name, s, m in zip(names, S_summ, M_summ):
             ymin, ymax = get_y_range(s.shape[0])
+            self.names.append(name)
             self.S_summ.append(s[ymin:ymax, :])
             self.M_summ.append(m[ymin:ymax, :])
+            self.names.append('%s (ud)' % name)
+            self.S_summ.append(np.flipud(s[ymin:ymax, :]))
+            self.M_summ.append(np.flipud(m[ymin:ymax, :]))
+            self.names.append('%s (lr)' % name)
+            self.S_summ.append(np.fliplr(s[ymin:ymax, :]))
+            self.M_summ.append(np.fliplr(m[ymin:ymax, :]))
 
         # Split into batches of windows and lists of their coordinates.
         for s, m in zip(self.S_summ, self.M_summ):
@@ -64,12 +70,7 @@ class ValNFMetricsCallback(Callback):
         cols = 4
         fig, _ = plt.subplots(len(self.names), cols,
                               figsize=(10, len(self.names) * 1.5))
-        logs['val_nf_prec_mean'] = 0.
-        logs['val_nf_reca_mean'] = 0.
-        logs['val_nf_comb_mean'] = 0.
-        logs['val_nf_comb_min'] = 1.
-
-        comb_vals = []
+        nf_combs, nf_precs, nf_recas = [], [], []
 
         # Predict batch, reconstruct window, compute the metrics, make and save plots.
         for idx in xrange(len(self.names)):
@@ -84,13 +85,11 @@ class ValNFMetricsCallback(Callback):
                 mp[y0:y1, x0:x1] = mp_wdw[:shape[0], :shape[1]]
 
             prec, reca, incl, excl, comb = nf_mask_metrics(m, mp.round())
-            comb_vals.append(comb)
-            logs['val_nf_prec_mean'] += prec / len(self.names)
-            logs['val_nf_reca_mean'] += reca / len(self.names)
-            logs['val_nf_comb_mean'] += comb / len(self.names)
-            logs['val_nf_comb_min'] = min(logs['val_nf_comb_min'], comb)
             logger.info('%s: prec=%-6.3lf reca=%-6.3lf incl=%-6.3lf excl=%-6.3lf comb=%-6.3lf' %
                         (name, prec, reca, incl, excl, comb))
+            nf_precs.append(prec)
+            nf_recas.append(reca)
+            nf_combs.append(comb)
 
             outlined = mask_outlines(s, [m], ['blue'])
             outlined = mask_outlines(outlined, [mp.round()], ['red'])
@@ -115,9 +114,14 @@ class ValNFMetricsCallback(Callback):
             fig.axes[cols * idx + 3].tick_params(axis='x', labelsize=6)
             fig.axes[cols * idx + 3].legend()
 
-        logger.info('prec mean=%.3lf, reca mean=%.3lf, comb mean=%.3lf, comb std=%.3lf, comb min=%.3lf' %
+        logs['val_nf_prec_mean'] = np.mean(nf_precs)
+        logs['val_nf_reca_mean'] = np.mean(nf_recas)
+        logs['val_nf_comb_mean'] = np.mean(nf_combs)
+        logs['val_nf_comb_adj'] = np.mean(nf_combs) * np.min(nf_combs)
+
+        logger.info('prec mean=%.3lf, reca mean=%.3lf, comb mean=%.3lf, comb adj=%.3lf' %
                     (logs['val_nf_prec_mean'], logs['val_nf_reca_mean'], logs['val_nf_comb_mean'],
-                        np.std(comb_vals), logs['val_nf_comb_min']))
+                        logs['val_nf_comb_adj']))
 
         plt.savefig('%s/samples_val_%03d.png' % (self.cpdir, epoch), dpi=300)
         plt.savefig('%s/samples_val_latest.png' % self.cpdir, dpi=300)
@@ -296,15 +300,11 @@ class UNet2DSummary(object):
             CSVLogger('%s/metrics.csv' % self.cpdir),
             MetricsPlotCallback('%s/metrics.png' % self.cpdir,
                                 '%s/metrics.csv' % self.cpdir),
-            # Max (mean combined score)
-            ModelCheckpoint('%s/weights_val_nf_comb_mean.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_comb_mean', save_best_only=True, verbose=1),
-            # Max (min combined score) i.e. "no dataset left behind"
-            ModelCheckpoint('%s/weights_val_nf_comb_min.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_comb_min', save_best_only=True, verbose=1),
-            ReduceLROnPlateau(monitor='val_nf_comb_min', factor=0.5, patience=3,
+            ModelCheckpoint('%s/weights_val_nf_comb_adj.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_comb_adj', save_best_only=True, verbose=1),
+            ReduceLROnPlateau(monitor='val_nf_comb_adj', factor=0.5, patience=3,
                               cooldown=1, min_lr=1e-4, verbose=1, mode='max'),
-            EarlyStopping(monitor='val_nf_comb_min', min_delta=1e-3,
+            EarlyStopping(monitor='val_nf_comb_adj', min_delta=1e-3,
                           patience=10, verbose=1, mode='max')
 
         ] + keras_callbacks
