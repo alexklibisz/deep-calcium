@@ -29,7 +29,7 @@ name_to_URL = {name: 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofi
                for name in neurofinder_names}
 
 
-def nf_load_hdf5(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
+def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expanduser('~')):
     '''Downloads neurofinder datasets and pre-processes them into hdf5 files.'''
 
     logger = logging.getLogger(funcname())
@@ -95,7 +95,7 @@ def nf_load_hdf5(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
         logger.info('Preparing hdf5 files for %s.' % name)
 
         # Create and populate the hdf5 sequence.
-        path_s = '%s/%s/sequence.hdf5' % (datasets_dir, name)
+        path_s = '%s/%s/series.hdf5' % (datasets_dir, name)
         if not path.exists(path_s):
             logger.info('Populating %s.' % path_s)
             sf = h5py.File(path_s, 'w')
@@ -143,27 +143,30 @@ def nf_load_hdf5(names, datasets_dir='/home/kzh/.deep-calcium-datasets'):
 
 
 def nf_mask_metrics(m, mp):
-    '''Computes precision, recall, inclusion, exclusion, and combined (F1) score for the given mask (m) and predicted mask (mp).'''
+    '''Computes precision, recall, inclusion, exclusion, and combined (F1) score for the given mask (m) and predicted mask (mp).
+    Note that this does assumes single 2D masks and does not aaccount for overlapping neurons.'''
 
     logger = logging.getLogger(funcname())
 
-    def mask_to_regional(msk):
+    def mask_to_regional(m):
         '''Convert a mask to a regional many object so it can be measured 
         using the neurofinder library.'''
-        msklbl = measure.label(msk)
+        mlbl = measure.label(m)
         coords = []
-        for lbl in range(1, np.max(msklbl) + 1):
-            yy, xx = np.where(msklbl == lbl)
+        for lbl in range(1, np.max(mlbl) + 1):
+            yy, xx = np.where(mlbl == lbl)
             coords.append([[y, x] for y, x in zip(yy, xx)])
         return many(coords)
-        
+
+    # Things can get buggy if the predicted mask is empty,
+    # so just return all zeros.
     if np.sum(mp.round()) == 0:
         return 0., 0., 0., 0., 0.
-        
+
     m_reg = mask_to_regional(m)
     mp_reg = mask_to_regional(mp)
-    r, p = centers(mp_reg, m_reg)
-    i, e = shapes(mp_reg, m_reg)
+    r, p = centers(m_reg, mp_reg)
+    i, e = shapes(m_reg, mp_reg)
     c = 2. * (r * p) / (r + p)
     return (p, r, i, e, c)
 

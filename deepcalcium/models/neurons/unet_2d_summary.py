@@ -17,121 +17,96 @@ from deepcalcium.datasets.nf import nf_mask_metrics
 from deepcalcium.utils.keras_helpers import HistoryPlotCallback
 from deepcalcium.utils.visuals import mask_outlines
 
+
 class ValNFMetricsCallback(Callback):
     '''Compute neurofinder metrics on validation data.'''
 
-    def __init__(self, S_summ, M_summ, names, window_shape, get_y_range, file_name):
+    def __init__(self, S_summ, M_summ, names, window_shape, get_y_range, cpdir):
         '''Break S_summ and M_summ into windows stored in batches. Each (s, m) gets
         a single batch. Batch indexing corresponds to names list.'''
         super(Callback, self).__init__()
         self.names = names
-        self.S_summ = S_summ
-        self.M_summ = M_summ
-        self.file_name = file_name
+        self.cpdir = cpdir
         self.s_batches = []
-        self.m_batches = []
         self.batch_coords = []
-        self.history = { name: {'prec': [], 'reca': []} for name in self.names }
-        pad = lambda x: np.pad(x, ((0, window_shape[0] - x.shape[0]), \
-                              (0, window_shape[1] - x.shape[1])), mode='reflect')
+        pad = lambda x: np.pad(x, ((0, window_shape[0] - x.shape[0]),
+                                   (0, window_shape[1] - x.shape[1])), mode='reflect')
+
+        # Crop the s and m summaries.
+        self.S_summ, self.M_summ = [], []
         for s, m in zip(S_summ, M_summ):
             ymin, ymax = get_y_range(s.shape[0])
-            s, m = s[ymin:ymax,:].copy(), m[ymin:ymax,:].copy()
+            self.S_summ.append(s[ymin:ymax, :])
+            self.M_summ.append(m[ymin:ymax, :])
+
+        # Split into batches of windows and lists of their coordinates.
+        for s, m in zip(self.S_summ, self.M_summ):
             batch_size = int(ceil(s.shape[0] / window_shape[0]) * ceil(s.shape[1] / window_shape[1]))
-            s_batch, m_batch = np.zeros((batch_size,) + window_shape), np.zeros((batch_size,) + window_shape)
+            s_batch = np.zeros((batch_size,) + window_shape)
             coords = []
             for y0 in xrange(0, s.shape[0], window_shape[0]):
                 for x0 in xrange(0, s.shape[1], window_shape[1]):
                     y1, x1 = y0 + window_shape[0], x0 + window_shape[1]
-                    s_batch[len(coords)] = pad(s[y0:y1,x0:x1])
-                    m_batch[len(coords)] = pad(m[y0:y1,x0:x1])
-                    coords.append((y0,y1,x0,x1))
+                    s_batch[len(coords)] = pad(s[y0:y1, x0:x1])
+                    coords.append((y0, y1, x0, x1))
             self.s_batches.append(s_batch)
-            self.m_batches.append(m_batch)
             self.batch_coords.append(coords)
-        
+
     def on_epoch_end(self, epoch, logs={}):
         '''Prediction on s_batches and reconstruction to compute metrics.'''
         logger = logging.getLogger(funcname())
-        
+        logger.info('\n')
         import matplotlib
         matplotlib.use('agg')
         import matplotlib.pyplot as plt
-        import matplotlib.colors as mcolors
-        
-        # Reconstruct windows and compute the metrics.
+
+        nb_col = 4
+        fig, _ = plt.subplots(len(self.names), nb_col, figsize=(10, len(self.names) * 1.5))
+        logs['val_prec'] = 0.
+        logs['val_reca'] = 0.
+        logs['val_comb'] = 0.
+
+        # Predict batch, reconstruct window, and compute the metrics.
         for idx in xrange(len(self.names)):
             name = self.names[idx]
             s = self.S_summ[idx]
             m = self.M_summ[idx]
-            s_batch = self.s_batches[idx]
-            m_batch = self.m_batches[idx]
             coords = self.batch_coords[idx]
-            mp_batch = self.model.predict(s_batch)
-            mp = np.zeros_like(m)
+            mp_batch = self.model.predict(self.s_batches[idx])
+            mp = np.zeros(m.shape)
             for mp_wdw, (y0, y1, x0, x1) in zip(mp_batch, coords):
-                shape = mp[y0:y1,x0:x1].shape
-                mp[y0:y1,x0:x1] = mp_wdw[:shape[0],:shape[1]]
-            prec, reca, incl, excl, comb = nf_mask_metrics(m, mp)
-            print(np.sum(m), np.sum(mp))
-            logger.info('%s: %-6.3lf %-6.3lf %-6.3lf %-6.3lf %-6.3lf' % \
+                shape = mp[y0:y1, x0:x1].shape
+                mp[y0:y1, x0:x1] = mp_wdw[:shape[0], :shape[1]]
+
+            prec, reca, incl, excl, comb = nf_mask_metrics(m, mp.round())
+            logs['val_prec'] += prec / len(self.names)
+            logs['val_reca'] += reca / len(self.names)
+            logs['val_comb'] += comb / len(self.names)
+            logger.info('%s: prec=%-6.3lf reca=%-6.3lf incl=%-6.3lf excl=%-6.3lf comb=%-6.3lf' %
                         (name, prec, reca, incl, excl, comb))
-            self.history[name]['prec'].append(prec)
-            self.history[name]['reca'].append(reca)
-            
-            
-        return 
-        
-        # Plot history.
-        linestyles = cycle(['-', '--'])
-        colors = cycle(mcolors.cnames)
-        plt.figure(figsize=(15, 8))
-        for name in self.names:
-            color=next(colors)
-            plt.plot(self.history[name]['prec'], label='%s prec' % name, color=color, linestyle='-')
-            plt.plot(self.history[name]['reca'], label='%s reca' % name, color=color, linestyle='--')
-            plt.legend(ncol=2, loc='lower right')
-            plt.ylim(0., 1.)
-        plt.savefig(self.file_name, dpi=300)
-        plt.close()
 
-class ValSamplesCallback(Callback):
-    '''Save files with the validation samples and their predicted masks.'''
-
-    def __init__(self, batch_gen, cpdir):
-        super(Callback, self).__init__()
-        self.batch_gen = batch_gen
-        self.cpdir = cpdir
-        s_batch, m_batch = next(self.batch_gen)
-        self.s_batch = s_batch
-        self.m_batch = m_batch
-
-    def on_epoch_end(self, epoch, logs={}):
-
-        import matplotlib
-        matplotlib.use('agg')
-        import matplotlib.pyplot as plt
-
-        s_batch, m_batch = self.s_batch, self.m_batch
-        s_batch, m_batch = s_batch[:25], m_batch[:25]
-        mp_batch = self.model.predict(s_batch)
-        fig, _ = plt.subplots(len(s_batch), 3, figsize=(3, int(len(s_batch) * 0.4)))
-
-        for ax in fig.axes:
-            ax.axis('off')
-
-        for i, (s, m, mp) in enumerate(zip(s_batch, m_batch, mp_batch)):
             outlined = mask_outlines(s, [m], ['blue'])
             outlined = mask_outlines(outlined, [mp.round()], ['red'])
-            fig.axes[i * 3 + 0].imshow(outlined, cmap='gray')
-            fig.axes[i * 3 + 1].imshow(m, cmap='gray')
-            mp[0][0] = 1.
-            fig.axes[i * 3 + 2].imshow(mp, cmap='gray')
+            fig.axes[nb_col * idx + 0].imshow(outlined)
+            fig.axes[nb_col * idx + 0].axis('off')
+            fig.axes[nb_col * idx + 1].set_title('%s: p=%.3lf, r=%.3lf, c=%.3lf' % (name, prec, reca, comb), size=8)
+            fig.axes[nb_col * idx + 1].imshow(m, cmap='gray')
+            fig.axes[nb_col * idx + 1].axis('off')
+            fig.axes[nb_col * idx + 2].imshow(mp, cmap='gray')
+            fig.axes[nb_col * idx + 2].axis('off')
 
-        plt.suptitle('Epoch %d, val dice squared = %.3lf' %
-                     (epoch, logs['val_dice_squared']))
-        plt.savefig('%s/samples_val_%03d.png' % (self.cpdir, epoch), dpi=600)
-        plt.savefig('%s/samples_val_latest.png' % (self.cpdir), dpi=600)
+            # Histogram of activations for neuron pixels.
+            yy, xx = np.where(m == 1)
+            act_nrn = mp[yy, xx]
+            fig.axes[nb_col * idx + 3].hist(act_nrn[np.where(act_nrn >= 0.5)], color='red', alpha=0.4, label='TP')
+            fig.axes[nb_col * idx + 3].hist(act_nrn[np.where(act_nrn < 0.5)], color='black', alpha=0.4, label='FN')
+            fig.axes[nb_col * idx + 3].set_xlim(0., 1.)
+            fig.axes[nb_col * idx + 3].tick_params(axis='y', labelsize=6)
+            fig.axes[nb_col * idx + 3].tick_params(axis='x', labelsize=6)
+            fig.axes[nb_col * idx + 3].legend()
+
+        plt.savefig('%s/samples_val_%03d.png' % (self.cpdir, epoch), dpi=300)
+        plt.savefig('%s/samples_latest.png' % self.cpdir, dpi=300)
         plt.close()
 
 
@@ -202,12 +177,14 @@ def _build_compile_unet(window_shape, weights_path):
     model = Model(inputs=inputs, outputs=x)
 
     # True positive proportion.
-    def tp(yt, yp):
-        return K.sum(K.round(yt)) / (K.sum(K.clip(yt, 1, 1)) + K.epsilon())
+    def ytpos(yt, yp):
+        size = K.sum(K.ones_like(yt))
+        return K.sum(yt) / (size + K.epsilon())
 
     # Predicted positive proportion.
-    def pp(yt, yp):
-        return K.sum(K.round(yp)) / (K.sum(K.clip(yp, 1, 1)) + K.epsilon())
+    def yppos(yt, yp):
+        size = K.sum(K.ones_like(yp))
+        return K.sum(K.round(yp)) / (size + K.epsilon())
 
     def prec(yt, yp):
         yp = K.round(yp)
@@ -227,11 +204,11 @@ def _build_compile_unet(window_shape, weights_path):
         return (nmr / dnm)
 
     def dice_squared_loss(yt, yp):
-        return (1 - dice_squared(yt, yp)) + K.clip(tp(yt, yp) - pp(yt, yp), 0, 1)
+        return (1 - dice_squared(yt, yp)) + K.abs(ytpos(yt, yp) - yppos(yt, yp))
 
     model.compile(optimizer=Adam(0.0008),  # loss='binary_crossentropy',
                   loss=dice_squared_loss,
-                  metrics=[dice_squared, tp, pp, prec, reca])
+                  metrics=[dice_squared, ytpos, yppos, prec, reca])
 
     if weights_path is not None:
         model.load_weights(weights_path)
@@ -289,16 +266,13 @@ class UNet2DSummary(object):
                                      nb_max_augment=5)
 
         gyr_val = lambda hs: (hs - int(hs * prop_val), hs)
-        gen_val = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_val,
-                                     nb_max_augment=1)
-                                     
-        names = [s.attrs['name'] for s in S]        
-                                     
+        gen_val = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_val)
+
+        names = [s.attrs['name'] for s in S]
+
         callbacks = [
             HistoryPlotCallback('%s/history.png' % self.cpdir),
-            ValNFMetricsCallback(S_summ, M_summ, names, window_shape, gyr_val, \
-                                '%s/history_nf_metrics.png' % self.cpdir),
-            ValSamplesCallback(gen_val, self.cpdir),
+            ValNFMetricsCallback(S_summ, M_summ, names, window_shape, gyr_val, self.cpdir),
             CSVLogger('%s/training.csv' % self.cpdir),
             ModelCheckpoint('%s/weights_loss_val.hdf5' % self.cpdir, mode='min',
                             monitor='val_loss', save_best_only=True, verbose=1),
@@ -306,10 +280,10 @@ class UNet2DSummary(object):
                             monitor='loss', save_best_only=True, verbose=0),
             ReduceLROnPlateau(monitor='dice_squared', factor=0.5, patience=3,
                               cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
-            #ReduceLROnPlateau(monitor='val_dice_squared', factor=0.8, patience=3,
-            #                  cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
-            #EarlyStopping(monitor='val_loss', min_delta=1e-3,
-            #              patience=10, verbose=1, mode='min')
+            ReduceLROnPlateau(monitor='val_loss', factor=0.8, patience=3,
+                              cooldown=2, min_lr=1e-4, verbose=1, mode='min'),
+            EarlyStopping(monitor='val_loss', min_delta=1e-3,
+                          patience=10, verbose=1, mode='min')
 
         ] + keras_callbacks
 
@@ -317,7 +291,7 @@ class UNet2DSummary(object):
                             validation_data=gen_val, validation_steps=nb_steps_val,
                             callbacks=callbacks, verbose=1, max_q_size=100)
 
-    def batch_gen_fit(self, S_summ, M_summ, batch_size, window_shape, get_y_range, nb_max_augment=5):
+    def batch_gen_fit(self, S_summ, M_summ, batch_size, window_shape, get_y_range, nb_max_augment=0):
         '''Builds and yields random batches used for training.'''
 
         logger = logging.getLogger(funcname())
@@ -431,7 +405,7 @@ class UNet2DSummary(object):
 
             # Track scores.
             prec, reca, incl, excl, comb = nf_mask_metrics(m, mp)
-            logger.info('%s: prec=%.3lf, reca=%.3lf, inc=%.3lf, excl=%.3lf, comb=%.3lf' % (
+            logger.info('%s: prec=%.3lf, reca=%.3lf, incl=%.3lf, excl=%.3lf, comb=%.3lf' % (
                 name, prec, reca, incl, excl, comb))
             mean_prec += prec / len(S)
             mean_reca += reca / len(S)

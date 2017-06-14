@@ -19,7 +19,7 @@ def training(dataset_name, weights_path):
 
     # Load all sequences and masks as hdf5 File objects.
     S_trn, M_trn = nf_load_hdf5(dataset_name)
-    
+
     # Remove low-quality datasets.
     bad_names = ['neurofinder.04.00']
     S_trn = [s for s in S_trn if s.attrs['name'] not in bad_names]
