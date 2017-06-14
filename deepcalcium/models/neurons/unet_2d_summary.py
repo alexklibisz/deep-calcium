@@ -118,6 +118,10 @@ class ValNFMetricsCallback(Callback):
         plt.close()
 
 
+def plot_windows(s, m, png_path):
+    pass
+
+
 def _build_compile_unet(window_shape, weights_path):
     '''Builds and compiles the keras UNet model. Can be replaced from outside the class if desired. Returns a compiled keras model.'''
 
@@ -132,20 +136,24 @@ def _build_compile_unet(window_shape, weights_path):
 
     x = Reshape(window_shape + (1,))(x)
     x = BatchNormalization(axis=3)(x)
+    x = Dropout(0.01)(x)
 
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
     dc_0_out = x
+    x = Dropout(0.05)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     dc_1_out = x
+    x = Dropout(0.05)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     dc_2_out = x
+    x = Dropout(0.05)(x)
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
@@ -162,16 +170,19 @@ def _build_compile_unet(window_shape, weights_path):
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
+    x = Dropout(0.05)(x)
 
     x = concatenate([x, dc_2_out], axis=3)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
+    x = Dropout(0.05)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(32, 2, strides=2, activation='relu')(x)
+    x = Dropout(0.05)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
@@ -211,9 +222,7 @@ def _build_compile_unet(window_shape, weights_path):
     def dice_squared_loss(yt, yp):
         return (1 - dice_squared(yt, yp))  # + K.abs(ytpos(yt, yp) - yppos(yt, yp))
 
-    model.compile(optimizer=Adam(0.001),
-                  # loss=dice_squared_loss,
-                  loss='binary_crossentropy',
+    model.compile(optimizer=Adam(0.002), loss='binary_crossentropy',
                   metrics=[dice_squared, ytpos, yppos, prec, reca])
 
     if weights_path is not None:
@@ -269,7 +278,7 @@ class UNet2DSummary(object):
         # Lambda functions define range of y indexes used for training and validation.
         gyr_trn = lambda hs: (0, int(hs * prop_trn))
         gen_trn = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_trn,
-                                     nb_max_augment=5)
+                                     nb_max_augment=10)
 
         gyr_val = lambda hs: (hs - int(hs * prop_val), hs)
         names = [s.attrs['name'] for s in S]
@@ -285,7 +294,7 @@ class UNet2DSummary(object):
             ModelCheckpoint('%s/weights_loss_trn.hdf5' % self.cpdir, mode='min',
                             monitor='loss', save_best_only=True, verbose=0),
             ReduceLROnPlateau(monitor='val_nf_comb', factor=0.5, patience=3,
-                              cooldown=2, min_lr=1e-4, verbose=1, mode='max'),
+                              cooldown=1, min_lr=1e-4, verbose=1, mode='max'),
             EarlyStopping(monitor='val_nf_comb', min_delta=1e-3,
                           patience=10, verbose=1, mode='max')
 
