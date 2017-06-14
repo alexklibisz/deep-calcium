@@ -64,9 +64,10 @@ class ValNFMetricsCallback(Callback):
         cols = 4
         fig, _ = plt.subplots(len(self.names), cols,
                               figsize=(10, len(self.names) * 1.5))
-        logs['val_nf_prec'] = 0.
-        logs['val_nf_reca'] = 0.
-        logs['val_nf_comb'] = 0.
+        logs['val_nf_prec_mean'] = 0.
+        logs['val_nf_reca_mean'] = 0.
+        logs['val_nf_comb_mean'] = 0.
+        logs['val_nf_comb_min'] = 1.
 
         comb_vals = []
 
@@ -84,9 +85,10 @@ class ValNFMetricsCallback(Callback):
 
             prec, reca, incl, excl, comb = nf_mask_metrics(m, mp.round())
             comb_vals.append(comb)
-            logs['val_nf_prec'] += prec / len(self.names)
-            logs['val_nf_reca'] += reca / len(self.names)
-            logs['val_nf_comb'] += comb / len(self.names)
+            logs['val_nf_prec_mean'] += prec / len(self.names)
+            logs['val_nf_reca_mean'] += reca / len(self.names)
+            logs['val_nf_comb_mean'] += comb / len(self.names)
+            logs['val_nf_comb_min'] = min(logs['val_nf_comb_min'], comb)
             logger.info('%s: prec=%-6.3lf reca=%-6.3lf incl=%-6.3lf excl=%-6.3lf comb=%-6.3lf' %
                         (name, prec, reca, incl, excl, comb))
 
@@ -113,10 +115,9 @@ class ValNFMetricsCallback(Callback):
             fig.axes[cols * idx + 3].tick_params(axis='x', labelsize=6)
             fig.axes[cols * idx + 3].legend()
 
-        logs['val_nf_comb_adj'] = np.mean(comb_vals) * (1 - np.std(comb_vals))
-
-        logger.info('prec mean=%-6.3lf, reca mean=%-6.3lf, comb mean=%-6.3lf, comb std=%-6.3lf' %
-                    (logs['val_nf_prec'], logs['val_nf_reca'], logs['val_nf_comb'], np.std(comb_vals)))
+        logger.info('prec mean=%.3lf, reca mean=%.3lf, comb mean=%.3lf, comb std=%.3lf, comb min=%.3lf' %
+                    (logs['val_nf_prec_mean'], logs['val_nf_reca_mean'], logs['val_nf_comb_mean'],
+                        np.std(comb_vals), logs['val_nf_comb_min']))
 
         plt.savefig('%s/samples_val_%03d.png' % (self.cpdir, epoch), dpi=300)
         plt.savefig('%s/samples_val_latest.png' % self.cpdir, dpi=300)
@@ -141,25 +142,25 @@ def _build_compile_unet(window_shape, weights_path):
 
     x = Reshape(window_shape + (1,))(x)
     x = BatchNormalization(axis=3)(x)
-    x = Dropout(0.01)(x)
+    x = Dropout(0.03)(x)
 
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
     dc_0_out = x
-    x = Dropout(0.05)(x)
 
+    x = Dropout(0.08)(x)
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     dc_1_out = x
-    x = Dropout(0.05)(x)
 
+    x = Dropout(0.08)(x)
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     dc_2_out = x
-    x = Dropout(0.05)(x)
 
+    x = Dropout(0.08)(x)
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
@@ -175,19 +176,19 @@ def _build_compile_unet(window_shape, weights_path):
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.05)(x)
+    x = Dropout(0.08)(x)
 
     x = concatenate([x, dc_2_out], axis=3)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.05)(x)
+    x = Dropout(0.08)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(32, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.05)(x)
+    x = Dropout(0.08)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
     x = Conv2D(32, 3, padding='same', activation='relu')(x)
@@ -295,15 +296,15 @@ class UNet2DSummary(object):
             CSVLogger('%s/metrics.csv' % self.cpdir),
             MetricsPlotCallback('%s/metrics.png' % self.cpdir,
                                 '%s/metrics.csv' % self.cpdir),
-            ModelCheckpoint('%s/weights_val_nf_comb.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_comb', save_best_only=True, verbose=0),
-            ModelCheckpoint('%s/weights_val_nf_comb_adj.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_comb_adj', save_best_only=True, verbose=1),
-            ModelCheckpoint('%s/weights_loss_trn.hdf5' % self.cpdir, mode='min',
-                            monitor='loss', save_best_only=True, verbose=0),
-            ReduceLROnPlateau(monitor='val_nf_comb', factor=0.5, patience=3,
+            # Max (mean combined score)
+            ModelCheckpoint('%s/weights_val_nf_comb_mean.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_comb_mean', save_best_only=True, verbose=1),
+            # Max (min combined score) i.e. "no dataset left behind"
+            ModelCheckpoint('%s/weights_val_nf_comb_min.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_comb_min', save_best_only=True, verbose=1),
+            ReduceLROnPlateau(monitor='val_nf_comb_min', factor=0.5, patience=3,
                               cooldown=1, min_lr=1e-4, verbose=1, mode='max'),
-            EarlyStopping(monitor='val_nf_comb', min_delta=1e-3,
+            EarlyStopping(monitor='val_nf_comb_min', min_delta=1e-3,
                           patience=10, verbose=1, mode='max')
 
         ] + keras_callbacks
