@@ -212,8 +212,8 @@ def _build_compile_unet(window_shape, weights_path):
         return (1 - dice_squared(yt, yp))  # + K.abs(ytpos(yt, yp) - yppos(yt, yp))
 
     model.compile(optimizer=Adam(0.001),
-                  loss=dice_squared_loss,
-                  # loss='binary_crossentropy',
+                  # loss=dice_squared_loss,
+                  loss='binary_crossentropy',
                   metrics=[dice_squared, ytpos, yppos, prec, reca])
 
     if weights_path is not None:
