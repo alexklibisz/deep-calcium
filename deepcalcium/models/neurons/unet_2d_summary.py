@@ -32,6 +32,7 @@ class ValidationMetricsCB(Callback):
         # Store standard, flipped, rotated summary images and their corresponding
         # validation masks.
         for s, m, name, (y0, y1) in zip(S_summ, M_summ, names, y_coords):
+
             vm = np.zeros(s.shape, dtype=np.uint8)
             vm[y0:y1, :] = 1
 
@@ -80,17 +81,23 @@ class ValidationMetricsCB(Callback):
 
             logger.info('%s p=%.3lf r=%.3lf f=%.3lf' % (name, p, r, f))
 
-        logger.info('mean precision  = %.3lf' % np.mean(pp))
-        logger.info('mean recall     = %.3lf' % np.mean(rr))
-        logger.info('mean f1         = %.3lf' % np.mean(ff))
-        logger.info('min  f1         = %.3lf' % np.min(ff))
+        # Compute validation score with added epsilon for early epochs.
+        eps = (1e-7 * epoch * int(epoch < 5))
+        val_score = np.mean(ff) * np.min(ff) + eps
 
-        val_score = np.mean(ff) * np.min(ff)
         logs['val_nf_adj'] = val_score
-        self.val_score_max = max(self.val_score_max, val_score)
+        logs['val_nf_prec'] = np.mean(pp)
+        logs['val_nf_reca'] = np.mean(rr)
+        logs['val_nf_f1'] = np.mean(ff)
+
+        logger.info('mean precision  = %.3lf' % logs['val_nf_prec'])
+        logger.info('mean recall     = %.3lf' % logs['val_nf_reca'])
+        logger.info('mean f1         = %.3lf' % logs['val_nf_f1'])
+        logger.info('min  f1         = %.3lf' % np.min(ff))
         logger.info('adjusted score  = %.3lf (%.3lf)' %
-                    (val_score, (val_score_max - val_score)))
+                    (val_score, (val_score - self.val_score_max)))
         logger.info('validation time = %.3lf' % (time() - tic))
+        self.val_score_max = max(self.val_score_max, val_score)
 
 
 def _build_compile_unet(window_shape, weights_path):
@@ -119,13 +126,13 @@ def _build_compile_unet(window_shape, weights_path):
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
     dc_1_out = x
 
-    x = Dropout(0.08)(x)
+    x = Dropout(0.1)(x)
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     dc_2_out = x
 
-    x = Dropout(0.08)(x)
+    x = Dropout(0.1)(x)
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
@@ -141,13 +148,13 @@ def _build_compile_unet(window_shape, weights_path):
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2D(256, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.08)(x)
+    x = Dropout(0.1)(x)
 
     x = concatenate([x, dc_2_out], axis=3)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2D(128, 3, padding='same', activation='relu')(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.08)(x)
+    x = Dropout(0.1)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
     x = Conv2D(64, 3, padding='same', activation='relu')(x)
@@ -363,6 +370,10 @@ class UNet2DSummary(object):
     def evaluate(self, S, M, weights_path=None, window_shape=(512, 512), save=False):
         '''Evaluates predicted masks vs. true masks for the given sequences..'''
 
+        import matplotlib
+        matplotlib.use('agg')
+        import matplotlib.pyplot as plt
+
         logger = logging.getLogger(funcname())
 
         model = self.model_builder(window_shape, weights_path)
@@ -375,9 +386,9 @@ class UNet2DSummary(object):
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
 
-        # Helper to pad up to window shape.
-        wh, ww = window_shape
-        pad = lambda s: np.pad(s, ((0, wh - s.shape[0]), (0, ww - s.shape[1])), 'reflect')
+        # # Helper to pad up to window shape.
+        # wh, ww = window_shape
+        # pad = lambda s: np.pad(s, ((0, wh - s.shape[0]), (0, ww - s.shape[1])), 'reflect')
 
         # Evaluate each sequence, mask pair.
         mean_prec, mean_reca, mean_comb = 0., 0., 0.
@@ -387,7 +398,7 @@ class UNet2DSummary(object):
 
             # Pad and make prediction.
             s_batch = np.zeros((1, ) + window_shape)
-            s_batch[0] = pad(s)
+            s_batch[0, :s.shape[0], :s.shape[1]] = s
             mp = model.predict(s_batch)[0, :hs, :ws].round()
 
             # Track scores.
@@ -400,8 +411,13 @@ class UNet2DSummary(object):
 
             # Save mask and prediction.
             if save:
-                imsave('%s/%s_m.png' % (self.cpdir, name), m * 255)
-                imsave('%s/%s_mp.png' % (self.cpdir, name), mp * 255)
+                imsave('%s/%s_mp.png' % (self.cpdir, name),
+                       mask_outlines(s, [m, mp], ['blue', 'red']))
+                # plt.imshow(mask_outlines(s, [m, mp], ['blue', 'red']))
+                # plt.savefig('%s/%s_mp.png' % (self.cpdir, name), dpi=300)
+                # plt.close()
+                # imsave('%s/%s_m.png' % (self.cpdir, name), m * 255)
+                # imsave('%s/%s_mp.png' % (self.cpdir, name), mp * 255)
 
         logger.info('Mean prec=%.3lf, reca=%.3lf, comb=%.3lf' %
                     (mean_prec, mean_reca, mean_comb))
@@ -420,10 +436,6 @@ class UNet2DSummary(object):
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
 
-        # Helper to pad up to window shape.
-        wh, ww = window_shape
-        pad = lambda s: np.pad(s, ((0, wh - s.shape[0]), (0, ww - s.shape[1])), 'reflect')
-
         # Store predictions.
         Mp = []
 
@@ -435,13 +447,14 @@ class UNet2DSummary(object):
 
             # Pad and make prediction.
             s_batch = np.zeros((1, ) + window_shape)
-            s_batch[0] = pad(s)
+            s_batch[0, :s.shape[0], :s.shape[1]] = s
             mp = model.predict(s_batch)[0, :hs, :ws].round()
             Mp.append(mp)
 
             # Save prediction.
             if save:
-                imsave('%s/%s_mp.png' % (self.cpdir, name), mp * 255)
+                outlined = mask_outlines(s, [mp], ['red'])
+                imsave('%s/%s_mp.png' % (self.cpdir, name), outlined)
 
             logger.info('%s prediction complete.' % name)
 

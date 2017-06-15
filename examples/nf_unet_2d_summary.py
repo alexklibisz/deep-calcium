@@ -38,8 +38,8 @@ def training(dataset_name, weights_path):
         nb_steps_trn=250,           # Training batches / epoch.
         nb_epochs=40,               # Epochs.
         keras_callbacks=[],         # Custom keras callbacks.
-        prop_trn=0.75,              # Proportion of height for training, validation.
-        prop_val=0.25,
+        prop_trn=0.74,              # Proportion of height for training, validation.
+        prop_val=0.26,
     )
 
 
