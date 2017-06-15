@@ -32,8 +32,9 @@ def training(dataset_name, weights_path):
     model.fit(
         S_trn, M_trn,               # hdf5 sequences and masks.
         weights_path=weights_path,  # Pre-trained weights.
-        window_shape=(128, 128),    # Input/output windows to the network.
-        batch_size=20,              # Batch size - adjust based on GPU.
+        shape_trn=(128, 128),       # Input/output windows to the network.
+        shape_val=(512, 512),
+        batch_size_trn=20,          # Batch size.
         nb_steps_trn=250,           # Training batches / epoch.
         nb_epochs=40,               # Epochs.
         keras_callbacks=[],         # Custom keras callbacks.

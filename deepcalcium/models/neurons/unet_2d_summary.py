@@ -1,9 +1,9 @@
-from __future__ import division
+from __future__ import division, print_function
 from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, EarlyStopping, CSVLogger, ReduceLROnPlateau
 from math import ceil
 from multiprocessing import Pool
-from os import path, mkdir
+from os import path, mkdir, remove
 from scipy.misc import imsave
 from skimage import transform
 from time import time
@@ -18,118 +18,79 @@ from deepcalcium.utils.keras_helpers import MetricsPlotCallback
 from deepcalcium.utils.visuals import mask_outlines
 
 
-class ValNFMetricsCallback(Callback):
-    '''Compute neurofinder metrics on validation data.'''
+class ValidationMetricsCB(Callback):
 
-    def __init__(self, S_summ, M_summ, names, window_shape, get_y_range, cpdir):
-        '''Break S_summ and M_summ into windows stored in batches. Each (s, m) gets
-        a single batch. Batch indexing corresponds to names list.'''
-        super(Callback, self).__init__()
+    def __init__(self, model_val, S_summ, M_summ, names, y_coords, cpdir):
+        self.model_val = model_val
+        self.S_summ = []
+        self.M_summ = []
+        self.val_masks = []
+        self.names = []
         self.cpdir = cpdir
-        self.s_batches = []
-        self.batch_coords = []
-        pad = lambda x: np.pad(x, ((0, window_shape[0] - x.shape[0]),
-                                   (0, window_shape[1] - x.shape[1])), mode='reflect')
+        self.val_score_max = 0.
 
-        # Crop and flip the s and m summaries.
-        self.names, self.S_summ, self.M_summ = [], [], []
-        for name, s, m in zip(names, S_summ, M_summ):
-            ymin, ymax = get_y_range(s.shape[0])
-            self.names.append(name)
-            self.S_summ.append(s[ymin:ymax, :])
-            self.M_summ.append(m[ymin:ymax, :])
-            self.names.append('%s (ud)' % name)
-            self.S_summ.append(np.flipud(s[ymin:ymax, :]))
-            self.M_summ.append(np.flipud(m[ymin:ymax, :]))
-            self.names.append('%s (lr)' % name)
-            self.S_summ.append(np.fliplr(s[ymin:ymax, :]))
-            self.M_summ.append(np.fliplr(m[ymin:ymax, :]))
+        # Store standard, flipped, rotated summary images and their corresponding
+        # validation masks.
+        for s, m, name, (y0, y1) in zip(S_summ, M_summ, names, y_coords):
+            vm = np.zeros(s.shape, dtype=np.uint8)
+            vm[y0:y1, :] = 1
 
-        # Split into batches of windows and lists of their coordinates.
-        for s, m in zip(self.S_summ, self.M_summ):
-            batch_size = int(ceil(s.shape[0] / window_shape[0])
-                             * ceil(s.shape[1] / window_shape[1]))
-            s_batch = np.zeros((batch_size,) + window_shape)
-            coords = []
-            for y0 in xrange(0, s.shape[0], window_shape[0]):
-                for x0 in xrange(0, s.shape[1], window_shape[1]):
-                    y1, x1 = y0 + window_shape[0], x0 + window_shape[1]
-                    s_batch[len(coords)] = pad(s[y0:y1, x0:x1])
-                    coords.append((y0, y1, x0, x1))
-            self.s_batches.append(s_batch)
-            self.batch_coords.append(coords)
+            def append(f):
+                self.S_summ.append(f(s))
+                self.M_summ.append(f(m))
+                self.val_masks.append(f(vm))
+                self.names.append(name)
+
+            append(lambda x: x)
+            append(np.fliplr)
+            append(np.flipud)
+            append(lambda x: np.rot90(x, 1))
+            append(lambda x: np.rot90(x, 2))
+            append(lambda x: np.rot90(x, 3))
+
+        return
 
     def on_epoch_end(self, epoch, logs={}):
-        '''Prediction on s_batches and reconstruction to compute metrics.'''
+
         logger = logging.getLogger(funcname())
         logger.info('\n')
-        import matplotlib
-        matplotlib.use('agg')
-        import matplotlib.pyplot as plt
+        tic = time()
 
-        cols = 4
-        fig, _ = plt.subplots(len(self.names), cols,
-                              figsize=(10, len(self.names) * 1.5))
-        nf_combs, nf_precs, nf_recas = [], [], []
+        # Save weights from the training model and load them into validation model.
+        path_weights = '%s/weights.tmp' % self.cpdir
+        self.model.save_weights(path_weights)
+        self.model_val.load_weights(path_weights)
+        remove(path_weights)
 
-        # Predict batch, reconstruct window, compute the metrics, make and save plots.
-        for idx in xrange(len(self.names)):
-            name = self.names[idx]
-            s = self.S_summ[idx]
-            m = self.M_summ[idx]
-            coords = self.batch_coords[idx]
-            mp_batch = self.model.predict(self.s_batches[idx])
-            mp = np.zeros(m.shape)
-            for mp_wdw, (y0, y1, x0, x1) in zip(mp_batch, coords):
-                shape = mp[y0:y1, x0:x1].shape
-                mp[y0:y1, x0:x1] = mp_wdw[:shape[0], :shape[1]]
+        # Tracking precision, recall, f1 values.
+        pp, rr, ff = [], [], []
 
-            prec, reca, incl, excl, comb = nf_mask_metrics(m, mp.round())
-            logger.info('%s: prec=%-6.3lf reca=%-6.3lf incl=%-6.3lf excl=%-6.3lf comb=%-6.3lf' %
-                        (name, prec, reca, incl, excl, comb))
-            nf_precs.append(prec)
-            nf_recas.append(reca)
-            nf_combs.append(comb)
+        for s, m, vm, name in zip(self.S_summ, self.M_summ, self.val_masks, self.names):
 
-            outlined = mask_outlines(s, [m], ['blue'])
-            outlined = mask_outlines(outlined, [mp.round()], ['red'])
-            fig.axes[cols * idx + 0].imshow(outlined)
-            fig.axes[cols * idx + 0].axis('off')
-            fig.axes[cols * idx + 1].set_title('%s: p=%.3lf, r=%.3lf, c=%.3lf'
-                                               % (name, prec, reca, comb), size=8)
-            fig.axes[cols * idx + 1].imshow(m, cmap='gray')
-            fig.axes[cols * idx + 1].axis('off')
-            fig.axes[cols * idx + 2].imshow(mp.round(), cmap='gray')
-            fig.axes[cols * idx + 2].axis('off')
+            # Batch prediction with padding.
+            batch = np.zeros((1,) + self.model_val.input_shape[1:])
+            batch[0, :s.shape[0], :s.shape[1]] = s
+            mp = self.model_val.predict(batch)[0, :s.shape[0], :s.shape[1]]
 
-            # Histogram of activations for neuron pixels.
-            yy, xx = np.where(m == 1)
-            act = mp[yy, xx]
-            tp = act[np.where(act >= 0.5)]
-            fn = act[np.where(act < 0.5)]
-            fig.axes[cols * idx + 3].hist(tp, color='red', label='TP')
-            fig.axes[cols * idx + 3].hist(fn, color='black', label='FN')
-            fig.axes[cols * idx + 3].set_xlim(0., 1.)
-            fig.axes[cols * idx + 3].tick_params(axis='y', labelsize=6)
-            fig.axes[cols * idx + 3].tick_params(axis='x', labelsize=6)
-            fig.axes[cols * idx + 3].legend()
+            # Evaluate metrics masks multiplied by validation mask.
+            p, r, i, e, f = nf_mask_metrics(m * vm, mp.round() * vm)
+            pp.append(p)
+            rr.append(r)
+            ff.append(f)
 
-        logs['val_nf_prec_mean'] = np.mean(nf_precs)
-        logs['val_nf_reca_mean'] = np.mean(nf_recas)
-        logs['val_nf_comb_mean'] = np.mean(nf_combs)
-        logs['val_nf_comb_adj'] = np.mean(nf_combs) * np.min(nf_combs)
+            logger.info('%s p=%.3lf r=%.3lf f=%.3lf' % (name, p, r, f))
 
-        logger.info('prec mean=%.3lf, reca mean=%.3lf, comb mean=%.3lf, comb adj=%.3lf' %
-                    (logs['val_nf_prec_mean'], logs['val_nf_reca_mean'], logs['val_nf_comb_mean'],
-                        logs['val_nf_comb_adj']))
+        logger.info('mean precision  = %.3lf' % np.mean(pp))
+        logger.info('mean recall     = %.3lf' % np.mean(rr))
+        logger.info('mean f1         = %.3lf' % np.mean(ff))
+        logger.info('min  f1         = %.3lf' % np.min(ff))
 
-        plt.savefig('%s/samples_val_%03d.png' % (self.cpdir, epoch), dpi=300)
-        plt.savefig('%s/samples_val_latest.png' % self.cpdir, dpi=300)
-        plt.close()
-
-
-def plot_windows(s, m, png_path):
-    pass
+        val_score = np.mean(ff) * np.min(ff)
+        logs['val_nf_adj'] = val_score
+        self.val_score_max = max(self.val_score_max, val_score)
+        logger.info('adjusted score  = %.3lf (%.3lf)' %
+                    (val_score, (val_score_max - val_score)))
+        logger.info('validation time = %.3lf' % (time() - tic))
 
 
 def _build_compile_unet(window_shape, weights_path):
@@ -264,20 +225,22 @@ class UNet2DSummary(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(self, S, M, weights_path=None, window_shape=(96, 96), batch_size=32, nb_steps_trn=200,
-            nb_epochs=20, prop_trn=0.8, prop_val=0.2, keras_callbacks=[]):
+    def fit(self, S, M, weights_path=None, shape_trn=(96, 96), shape_val=(512, 512), batch_size_trn=32,
+            batch_size_val=1, nb_steps_trn=200, nb_epochs=20, prop_trn=0.75, prop_val=0.25, keras_callbacks=[]):
         '''Constructs network based on parameters and trains with the given data.'''
 
         assert len(S) == len(M)
-        assert len(window_shape) == 2
-        assert window_shape[0] == window_shape[1]
+        assert len(shape_trn) == 2
+        assert len(shape_val) == 2
+        assert shape_trn[0] == shape_trn[1]
+        assert shape_val[0] == shape_val[1]
         assert 0 < prop_trn < 1
         assert 0 < prop_val < 1
 
         logger = logging.getLogger(funcname())
 
         # Define, compile neural net.
-        model = self.model_builder(window_shape, weights_path)
+        model = self.model_builder(shape_trn, weights_path)
         model.summary()
 
         # Pre-compute summaries once to avoid problems with accessing HDF5 objects
@@ -286,25 +249,28 @@ class UNet2DSummary(object):
         M_summ = [self.mask_summary_func(m) for m in M]
 
         # Define generators for training and validation data.
-        # Lambda functions define range of y indexes used for training and validation.
-        gyr_trn = lambda hs: (0, int(hs * prop_trn))
-        gen_trn = self.batch_gen_fit(S_summ, M_summ, batch_size, window_shape, get_y_range=gyr_trn,
-                                     nb_max_augment=10)
+        y_coords_trn = [(0, int(s.shape[0] * prop_trn)) for s in S_summ]
+        gen_trn = self.batch_gen_fit(
+            S_summ, M_summ, y_coords_trn, batch_size_trn, shape_trn, nb_max_augment=10)
 
-        gyr_val = lambda hs: (hs - int(hs * prop_val), hs)
+        # Validation setup.
+        y_coords_val = [(s.shape[0] - int(s.shape[0] * prop_val), s.shape[0])
+                        for s in S_summ]
         names = [s.attrs['name'] for s in S]
+        model_val = self.model_builder(shape_val, weights_path)
 
         callbacks = [
-            ValNFMetricsCallback(S_summ, M_summ, names,
-                                 window_shape, gyr_val, self.cpdir),
+            ValidationMetricsCB(model_val, S_summ, M_summ,
+                                names, y_coords_val, self.cpdir),
+            #ValNFMetricsCallback(S_summ, M_summ, names, window_shape, gyr_val, self.cpdir),
             CSVLogger('%s/metrics.csv' % self.cpdir),
             MetricsPlotCallback('%s/metrics.png' % self.cpdir,
                                 '%s/metrics.csv' % self.cpdir),
-            ModelCheckpoint('%s/weights_val_nf_comb_adj.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_comb_adj', save_best_only=True, verbose=1),
-            ReduceLROnPlateau(monitor='val_nf_comb_adj', factor=0.5, patience=3,
+            ModelCheckpoint('%s/weights_val_nf_adj.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_adj', save_best_only=True, verbose=1),
+            ReduceLROnPlateau(monitor='val_nf_adj', factor=0.5, patience=3,
                               cooldown=1, min_lr=1e-4, verbose=1, mode='max'),
-            EarlyStopping(monitor='val_nf_comb_adj', min_delta=1e-3,
+            EarlyStopping(monitor='val_nf_adj', min_delta=1e-3,
                           patience=10, verbose=1, mode='max')
 
         ] + keras_callbacks
@@ -312,7 +278,7 @@ class UNet2DSummary(object):
         model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
                             callbacks=callbacks, verbose=1, max_q_size=100)
 
-    def batch_gen_fit(self, S_summ, M_summ, batch_size, window_shape, get_y_range, nb_max_augment=0):
+    def batch_gen_fit(self, S_summ, M_summ, y_coords, batch_size, window_shape, nb_max_augment=0):
         '''Builds and yields random batches used for training.'''
 
         logger = logging.getLogger(funcname())
@@ -345,8 +311,8 @@ class UNet2DSummary(object):
 
         # Pre-compute neuron locations for faster sampling.
         neuron_locs = []
-        for m in M_summ:
-            hsmin, hsmax = get_y_range(m.shape[0])
+        for ds_idx, m in enumerate(M_summ):
+            hsmin, hsmax = y_coords[ds_idx]
             neuron_locs.append(zip(*np.where(m[hsmin:hsmax, :] == 1)))
 
         # Cycle to sequentially sample datasets.
@@ -366,7 +332,7 @@ class UNet2DSummary(object):
 
                 # Dimensions. Height constrained by y range.
                 hs, ws = s.shape
-                hsmin, hsmax = get_y_range(hs)
+                hsmin, hsmax = y_coords[ds_idx]
 
                 # Pick a random neuron location within this mask to center the window.
                 cy, cx = neuron_locs[ds_idx][rng.randint(0, len(neuron_locs[ds_idx]))]
