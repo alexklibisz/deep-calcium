@@ -18,41 +18,40 @@ def training(dataset_name, weights_path):
     '''Train on all neurofinder datasets.'''
 
     # Load all sequences and masks as hdf5 File objects.
-    S_trn, M_trn = nf_load_hdf5(dataset_name)
+    ds_trn = nf_load_hdf5(dataset_name)
 
     # Remove low-quality datasets.
     bad_names = ['neurofinder.04.00']
-    S_trn = [s for s in S_trn if s.attrs['name'] not in bad_names]
-    M_trn = [m for m in M_trn if m.attrs['name'] not in bad_names]
+    ds_trn = [ds for ds in ds_trn if ds.attrs['name'] not in bad_names]
 
     # Setup model.
     model = UNet2DSummary(cpdir='checkpoints/unet_2d_summary_128x128_nf')
 
     # Training.
     model.fit(
-        S_trn, M_trn,               # hdf5 sequences and masks.
+        ds_trn,                     # hdf5 series and masks.
         weights_path=weights_path,  # Pre-trained weights.
         shape_trn=(128, 128),       # Input/output windows to the network.
         shape_val=(512, 512),
-        batch_size_trn=20,          # Batch size.
+        batch_size_trn=16,          # Batch size.
         nb_steps_trn=250,           # Training batches / epoch.
         nb_epochs=40,               # Epochs.
         keras_callbacks=[],         # Custom keras callbacks.
-        prop_trn=0.74,              # Proportion of height for training, validation.
-        prop_val=0.26,
+        prop_trn=0.75,              # Proportion of height for training, validation.
+        prop_val=0.25,
     )
 
 
 def evaluation(dataset_name, weights_path):
     '''Evaluate datasets.'''
 
-    S_trn, M_trn = nf_load_hdf5(dataset_name)
+    ds_trn = nf_load_hdf5(dataset_name)
 
     model = UNet2DSummary(cpdir='checkpoints/unet_2d_summary_128x128_nf')
 
     # Evaluate training data performance using neurofinder metrics.
     model.evaluate(
-        S_trn, M_trn,
+        ds_trn,
         weights_path=weights_path,
         window_shape=(512, 512),
         save=True
@@ -63,14 +62,14 @@ def prediction(dataset_name, weights_path):
     '''Predictions on all neurofinder datasets.'''
 
     # Load all sequences and masks as hdf5 File objects.
-    S_tst, _ = nf_load_hdf5(dataset_name)
+    ds_tst = nf_load_hdf5(dataset_name)
 
     model = UNet2DSummary(cpdir='checkpoints/unet_2d_summary_128x128_nf')
 
     # Prediction. Saves predictions to checkpoint directory and returns them
     # as numpy arrays.
     Mp = model.predict(
-        S_tst,                       # hdf5 sequences (no masks).
+        ds_tst,                      # hdf5 sequences (no masks).
         weights_path=weights_path,   # Pre-trained weights.
         window_shape=(512, 512),     # Input/output windows to the network.
         save=True
@@ -78,7 +77,7 @@ def prediction(dataset_name, weights_path):
 
     # Make a submission from the predicted masks.
     json_path = '%s/submission_%d.json' % (model.cpdir, time())
-    names = [s.attrs['name'] for s in S_tst]
+    names = [ds.attrs['name'] for ds in ds_tst]
     nf_submit(Mp, names, json_path)
     json_path = '%s/submission_latest.json' % model.cpdir
     nf_submit(Mp, names, json_path)

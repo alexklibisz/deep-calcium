@@ -1,8 +1,10 @@
+from __future__ import division
 from glob import glob
 from neurofinder import centers, shapes
 from os import path, mkdir, remove, rename
 from scipy.misc import imread
 from skimage import measure
+from tqdm import tqdm
 from regional import many
 from zipfile import ZipFile
 import h5py
@@ -27,6 +29,124 @@ neurofinder_names = sorted([
 
 name_to_URL = {name: 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/%s.zip' % name
                for name in neurofinder_names}
+
+
+# def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expanduser('~')):
+#     '''Downloads neurofinder datasets and pre-processes them into hdf5 files.'''
+
+#     logger = logging.getLogger(funcname())
+
+#     # Convert special names 'all', 'all_train', and 'all_test'.
+#     if type(names) == str and names.lower() == 'all':
+#         names = neurofinder_names
+#     elif type(names) == str and names.lower() == 'all_train':
+#         _ = [n for n in neurofinder_names if '.test' not in n]
+#         names = sorted(_)
+#     elif type(names) == str and names.lower() == 'all_test':
+#         _ = [n for n in neurofinder_names if '.test' in n]
+#         names = sorted(_)
+#     elif type(names) == str:
+#         names = names.split(',')
+#     assert type(names) == list
+
+#     if not path.exists(datasets_dir):
+#         mkdir(datasets_dir)
+
+#     # Download datasets, unzip them, delete zip files.
+#     for name in names:
+#         url = name_to_URL[name]
+#         zip_name = '%s.zip' % name
+#         zip_path = '%s/%s' % (datasets_dir, zip_name)
+#         unzip_name = zip_name[:-4]
+#         unzip_path = zip_path[:-4]
+
+#         if path.exists(unzip_path):
+#             logger.info('%s already downloaded.' % unzip_name)
+#             continue
+
+#         logger.info('Downloading %s.' % zip_name)
+
+#         download = requests.get(url)
+#         logger.info('Download complete, writing to %s.' % zip_path)
+#         with open(zip_path, 'wb') as zip_file:
+#             zip_file.write(download.content)
+
+#         logger.info('Unzipping %s to %s.' % (zip_name, unzip_path))
+#         zip_ref = ZipFile(zip_path, 'r')
+#         zip_ref.extractall(datasets_dir)
+#         zip_ref.close()
+
+#         logger.info('Deleting %s.' % zip_name)
+#         remove(zip_path)
+
+#     # Data types and max values.
+#     NP_DT_S, NP_DT_M = np.float32, np.uint8
+#     HDF5_DT_S, HDF5_DT_M = 'float16', 'int8'
+#     MAX_VAL_S = 2**16
+
+#     def tomask(coords, shape):
+#         yy, xx = [c[0] for c in coords], [c[1] for c in coords]
+#         m = np.zeros(shape)
+#         m[yy, xx] = 1
+#         return m
+
+#     # Read the sequences and masks and store them as hdf5 files. Return the hdf5 objects.
+#     S, M = [], []
+#     for name in names:
+
+#         logger.info('Preparing hdf5 files for %s.' % name)
+
+#         old_path_s = '%s/%s/sequence.hdf5' % (datasets_dir, name)
+#         new_path_s = '%s/%s/series.hdf5' % (datasets_dir, name)
+#         if path.exists(old_path_s) and not path.exists(new_path_s):
+#             rename(old_path_s, new_path_s)
+
+#         # Create and populate the hdf5 sequence.
+#         path_s = new_path_s
+#         if not path.exists(path_s):
+#             logger.info('Populating %s.' % path_s)
+#             sf = h5py.File(path_s, 'w')
+#             sf.attrs['name'] = name
+#             dir_s_i = '%s/%s/images' % (datasets_dir, name)
+#             paths_s_i = sorted(glob('%s/*.tiff' % (dir_s_i)))
+#             s = np.array([imread(p) * 1. / MAX_VAL_S for p in paths_s_i], dtype=NP_DT_S)
+#             dset_s = sf.create_dataset('s', s.shape, dtype=HDF5_DT_S)
+#             dset_s[...] = s
+#             dset_mean = sf.create_dataset('summary_mean', s.shape[1:], dtype=NP_DT_S)
+#             dset_mean[...] = np.mean(s, axis=0)
+#             dset_max = sf.create_dataset('summary_max', s.shape[1:], dtype=NP_DT_S)
+#             dset_max[...] = np.max(s, axis=0)
+#             sf.flush()
+#             sf.close()
+
+#         # Store the read-only sequence.
+#         S.append(h5py.File(path_s, 'r'))
+
+#         # Create the hdf5 mask either way for consistency.
+#         path_m = '%s/%s/mask.hdf5' % (datasets_dir, name)
+#         if not path.exists(path_m):
+#             mf = h5py.File(path_m, 'w')
+#             mf.close()
+
+#             # Populate the mask for training datasets.
+#             if '.test' not in name:
+#                 logger.info('Populating %s.' % path_m)
+#                 mf = h5py.File(path_m, 'w')
+#                 mf.attrs['name'] = name
+#                 r = '%s/%s/regions/regions.json' % (datasets_dir, name)
+#                 regions = json.load(open(r))
+#                 m_shape = S[-1].get('s').shape[1:]
+#                 m = [tomask(r['coordinates'], m_shape) for r in regions]
+#                 m = np.array(m, dtype=NP_DT_M)
+#                 dset_m = mf.create_dataset('m', m.shape, dtype=HDF5_DT_M)
+#                 dset_m[...] = m
+#                 mf.flush()
+#                 mf.close()
+
+#         # Store the read-only mask.
+#         M.append(h5py.File(path_m, 'r'))
+
+#     return S, M
 
 
 def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expanduser('~')):
@@ -77,11 +197,6 @@ def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expandus
         logger.info('Deleting %s.' % zip_name)
         remove(zip_path)
 
-    # Data types and max values.
-    NP_DT_S, NP_DT_M = np.float32, np.uint8
-    HDF5_DT_S, HDF5_DT_M = 'float16', 'int8'
-    MAX_VAL_S = 2**16
-
     def tomask(coords, shape):
         yy, xx = [c[0] for c in coords], [c[1] for c in coords]
         m = np.zeros(shape)
@@ -89,62 +204,53 @@ def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expandus
         return m
 
     # Read the sequences and masks and store them as hdf5 files. Return the hdf5 objects.
+    datasets = []
     S, M = [], []
     for name in names:
 
         logger.info('Preparing hdf5 files for %s.' % name)
+        ds_path = '%s/%s/dataset.hdf5' % (datasets_dir, name)
+        if not path.exists(ds_path):
+            logger.info('Populating %s.' % ds_path)
+            dsf = h5py.File(ds_path, 'w')
+            dsf.attrs['name'] = name
+            # Populate series, mean summary, max summary in such a way
+            # that shouldn't eat up all memory.
+            s_dir = '%s/%s/images' % (datasets_dir, name)
+            s_paths = sorted(glob('%s/*.tiff' % (s_dir)))
+            i_shape = imread(s_paths[0]).shape
+            s_shape = (len(s_paths),) + i_shape
+            dset_s = dsf.create_dataset('series/raw', s_shape, dtype='int16')
+            dset_smean = dsf.create_dataset('series/mean', i_shape, dtype='float16')
+            dset_smax = dsf.create_dataset('series/max', i_shape, dtype='int16')
+            dset_smax[...] = np.zeros(i_shape)
+            for idx, p in tqdm(enumerate(s_paths)):
+                img = imread(p)
+                dset_s[idx, :, :] = img
+                dset_smean[...] += (img * 1. / len(s_paths))
+                dset_smax[...] = np.maximum(dset_smax[...], img)
 
-        old_path_s = '%s/%s/sequence.hdf5' % (datasets_dir, name)
-        new_path_s = '%s/%s/series.hdf5' % (datasets_dir, name)
-        if path.exists(old_path_s) and not path.exists(new_path_s):
-            rename(old_path_s, new_path_s)
-
-        # Create and populate the hdf5 sequence.
-        path_s = new_path_s
-        if not path.exists(path_s):
-            logger.info('Populating %s.' % path_s)
-            sf = h5py.File(path_s, 'w')
-            sf.attrs['name'] = name
-            dir_s_i = '%s/%s/images' % (datasets_dir, name)
-            paths_s_i = sorted(glob('%s/*.tiff' % (dir_s_i)))
-            s = np.array([imread(p) * 1. / MAX_VAL_S for p in paths_s_i], dtype=NP_DT_S)
-            dset_s = sf.create_dataset('s', s.shape, dtype=HDF5_DT_S)
-            dset_s[...] = s
-            dset_mean = sf.create_dataset('summary_mean', s.shape[1:], dtype=NP_DT_S)
-            dset_mean[...] = np.mean(s, axis=0)
-            dset_max = sf.create_dataset('summary_max', s.shape[1:], dtype=NP_DT_S)
-            dset_max[...] = np.max(s, axis=0)
-            sf.flush()
-            sf.close()
-
-        # Store the read-only sequence.
-        S.append(h5py.File(path_s, 'r'))
-
-        # Create the hdf5 mask either way for consistency.
-        path_m = '%s/%s/mask.hdf5' % (datasets_dir, name)
-        if not path.exists(path_m):
-            mf = h5py.File(path_m, 'w')
-            mf.close()
-
-            # Populate the mask for training datasets.
+            # Populate mask, max summary.
             if '.test' not in name:
-                logger.info('Populating %s.' % path_m)
-                mf = h5py.File(path_m, 'w')
-                mf.attrs['name'] = name
                 r = '%s/%s/regions/regions.json' % (datasets_dir, name)
                 regions = json.load(open(r))
-                m_shape = S[-1].get('s').shape[1:]
-                m = [tomask(r['coordinates'], m_shape) for r in regions]
-                m = np.array(m, dtype=NP_DT_M)
-                dset_m = mf.create_dataset('m', m.shape, dtype=HDF5_DT_M)
-                dset_m[...] = m
-                mf.flush()
-                mf.close()
+                i_shape = s_shape[1:]
+                m_shape = (len(regions),) + i_shape
+                dset_m = dsf.create_dataset('masks/raw', m_shape, dtype='int8')
+                dset_mmax = dsf.create_dataset('masks/max', i_shape, dtype='int8')
+                for idx, r in tqdm(enumerate(regions)):
+                    msk = tomask(r['coordinates'], m_shape[1:])
+                    dset_m[idx, :, :] = msk
+                    dset_mmax[...] = np.maximum(dset_mmax[...], msk)
+                dset_mmax = np.max(dset_m, axis=0)
 
-        # Store the read-only mask.
-        M.append(h5py.File(path_m, 'r'))
+            dsf.flush()
+            dsf.close()
 
-    return S, M
+        dsf = h5py.File(ds_path, 'r')
+        datasets.append(dsf)
+
+    return datasets
 
 
 def nf_mask_metrics(m, mp):
@@ -154,7 +260,7 @@ def nf_mask_metrics(m, mp):
     logger = logging.getLogger(funcname())
 
     def mask_to_regional(m):
-        '''Convert a mask to a regional many object so it can be measured 
+        '''Convert a mask to a regional many object so it can be measured
         using the neurofinder library.'''
         mlbl = measure.label(m)
         coords = []

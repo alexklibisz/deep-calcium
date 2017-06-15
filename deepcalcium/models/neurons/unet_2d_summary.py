@@ -210,13 +210,17 @@ def _build_compile_unet(window_shape, weights_path):
     return model
 
 
-def _summarize_sequence(s):
-    assert 'summary_mean' in s
-    return s.get('summary_mean')[...]
+def _summarize_sequence(ds):
+    assert 'series/mean' in ds
+    summ = ds.get('series/mean')[...] * 1. / 2**16
+    assert np.min(summ) >= 0
+    assert np.max(summ) <= 1
+    return summ
 
 
-def _summarize_mask(m):
-    return np.max(m.get('m'), axis=0)
+def _summarize_mask(ds):
+    assert 'masks/max' in ds
+    return ds.get('masks/max')[...]
 
 
 class UNet2DSummary(object):
@@ -232,11 +236,10 @@ class UNet2DSummary(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(self, S, M, weights_path=None, shape_trn=(96, 96), shape_val=(512, 512), batch_size_trn=32,
+    def fit(self, datasets, weights_path=None, shape_trn=(96, 96), shape_val=(512, 512), batch_size_trn=32,
             batch_size_val=1, nb_steps_trn=200, nb_epochs=20, prop_trn=0.75, prop_val=0.25, keras_callbacks=[]):
         '''Constructs network based on parameters and trains with the given data.'''
 
-        assert len(S) == len(M)
         assert len(shape_trn) == 2
         assert len(shape_val) == 2
         assert shape_trn[0] == shape_trn[1]
@@ -250,10 +253,9 @@ class UNet2DSummary(object):
         model = self.model_builder(shape_trn, weights_path)
         model.summary()
 
-        # Pre-compute summaries once to avoid problems with accessing HDF5 objects
-        # from multiple workers.
-        S_summ = [self.sequence_summary_func(s) for s in S]
-        M_summ = [self.mask_summary_func(m) for m in M]
+        # Pre-compute summaries once to avoid problems with accessing HDF5.
+        S_summ = [self.sequence_summary_func(ds) for ds in datasets]
+        M_summ = [self.mask_summary_func(ds) for ds in datasets]
 
         # Define generators for training and validation data.
         y_coords_trn = [(0, int(s.shape[0] * prop_trn)) for s in S_summ]
@@ -263,7 +265,7 @@ class UNet2DSummary(object):
         # Validation setup.
         y_coords_val = [(s.shape[0] - int(s.shape[0] * prop_val), s.shape[0])
                         for s in S_summ]
-        names = [s.attrs['name'] for s in S]
+        names = [ds.attrs['name'] for ds in datasets]
         model_val = self.model_builder(shape_val, weights_path)
 
         callbacks = [
@@ -367,7 +369,7 @@ class UNet2DSummary(object):
 
             yield s_batch, m_batch
 
-    def evaluate(self, S, M, weights_path=None, window_shape=(512, 512), save=False):
+    def evaluate(self, datasets, weights_path=None, window_shape=(512, 512), save=False):
         '''Evaluates predicted masks vs. true masks for the given sequences..'''
 
         import matplotlib
@@ -378,22 +380,15 @@ class UNet2DSummary(object):
 
         model = self.model_builder(window_shape, weights_path)
 
-        # Pre-compute summaries.
-        logger.info('Computing sequence and mask summaries.')
-        S_summ = [self.sequence_summary_func(s) for s in tqdm(S)]
-        M_summ = [self.mask_summary_func(m) for m in tqdm(M)]
-
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
 
-        # # Helper to pad up to window shape.
-        # wh, ww = window_shape
-        # pad = lambda s: np.pad(s, ((0, wh - s.shape[0]), (0, ww - s.shape[1])), 'reflect')
-
         # Evaluate each sequence, mask pair.
         mean_prec, mean_reca, mean_comb = 0., 0., 0.
-        for i, (s, m) in enumerate(zip(S_summ, M_summ)):
-            name = S[i].attrs['name']
+        for ds in datasets:
+            name = ds.attrs['name']
+            s = self.sequence_summary_func(ds)
+            m = self.mask_summary_func(ds)
             hs, ws = s.shape
 
             # Pad and make prediction.
@@ -405,33 +400,24 @@ class UNet2DSummary(object):
             prec, reca, incl, excl, comb = nf_mask_metrics(m, mp)
             logger.info('%s: prec=%.3lf, reca=%.3lf, incl=%.3lf, excl=%.3lf, comb=%.3lf' % (
                 name, prec, reca, incl, excl, comb))
-            mean_prec += prec / len(S)
-            mean_reca += reca / len(S)
-            mean_comb += comb / len(S)
+            mean_prec += prec / len(datasets)
+            mean_reca += reca / len(datasets)
+            mean_comb += comb / len(datasets)
 
             # Save mask and prediction.
             if save:
                 imsave('%s/%s_mp.png' % (self.cpdir, name),
                        mask_outlines(s, [m, mp], ['blue', 'red']))
-                # plt.imshow(mask_outlines(s, [m, mp], ['blue', 'red']))
-                # plt.savefig('%s/%s_mp.png' % (self.cpdir, name), dpi=300)
-                # plt.close()
-                # imsave('%s/%s_m.png' % (self.cpdir, name), m * 255)
-                # imsave('%s/%s_mp.png' % (self.cpdir, name), mp * 255)
 
         logger.info('Mean prec=%.3lf, reca=%.3lf, comb=%.3lf' %
                     (mean_prec, mean_reca, mean_comb))
 
-    def predict(self, S, weights_path=None, window_shape=(512, 512), batch_size=10, save=False):
+    def predict(self, datasets, weights_path=None, window_shape=(512, 512), batch_size=10, save=False):
         '''Predicts masks for the given sequences. Optionally saves the masks. Returns the masks as numpy arrays in order corresponding the given sequences.'''
 
         logger = logging.getLogger(funcname())
 
         model = self.model_builder(window_shape, weights_path)
-
-        # Pre-compute summaries.
-        logger.info('Computing sequence and mask summaries.')
-        S_summ = [self.sequence_summary_func(s) for s in tqdm(S)]
 
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
@@ -441,8 +427,9 @@ class UNet2DSummary(object):
 
         # Evaluate each sequence, mask pair.
         mean_prec, mean_reca, mean_comb = 0., 0., 0.
-        for i, s in enumerate(S_summ):
-            name = S[i].attrs['name']
+        for ds in datasets:
+            name = ds.attrs['name']
+            s = self.sequence_summary_func(ds)
             hs, ws = s.shape
 
             # Pad and make prediction.

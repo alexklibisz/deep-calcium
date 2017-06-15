@@ -7,20 +7,17 @@ import logging
 from deepcalcium.utils.runtime import funcname
 
 
-def dataset_to_mp4(series, mask, mp4_path):
+def dataset_to_mp4(s, m, mp4_path):
     '''Converts the given series to an mp4 video. If the mask is given, adds an outline around each neuron.'''
 
     logger = logging.getLogger(funcname())
     logger.info('Preparing video %s.' % mp4_path)
 
+    s = s.astype(np.float32)
+    s = (s - np.min(s)) / (np.max(s) - np.min(s)) * 255
+
     # If mask is given make a color video with neuron centers marked.
-    if mask is not None:
-
-        s = series.get('s')[...]
-        m = mask.get('m')[...]
-
-        assert np.max(s) <= 1.
-        s = (s - np.min(s)) / (np.max(s) - np.min(s)) * 255
+    if m is not None:
 
         video = np.zeros(s.shape + (3,), dtype=np.uint8)
         video[:, :, :, 0] = s
@@ -38,10 +35,7 @@ def dataset_to_mp4(series, mask, mp4_path):
 
     else:
 
-        s = series.get('s')
-        video = s[...]
-        video = video * 1. / 255.
-        video = video.astype(np.uint8)
+        video = s.astype(np.uint8)
 
     vwrite(mp4_path.encode('ascii'), video)
     logger.info('Saved video %s.' % mp4_path)
@@ -52,12 +46,13 @@ def mask_outlines(image, mask_arrs=[], colors=[]):
 
     assert len(mask_arrs) == len(colors), 'One color per mask.'
     logger = logging.getLogger(funcname())
+    image = image.astype(np.float32)
 
     # Convert the image to RGB.
     if len(image.shape) == 2:
         image = gray2rgb(image)
 
-    # Clip outliners, scale the image to [0,1], multiply by 255.
+    # Clip outliners, scale the image to [0,1].
     image = np.clip(image, 0, np.percentile(image, 99))
     image = (image - np.min(image)) / (np.max(image) - np.min(image))
 
