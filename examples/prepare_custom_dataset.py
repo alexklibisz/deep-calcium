@@ -22,6 +22,7 @@ def make_dataset_series_only(name, tiffglob, datasets_dir):
 
     logger.info('Populating %s.' % dspath)
     dsf = h5py.File(dspath, 'w')
+    dsf.attrs['name'] = name
     s_paths = sorted(glob(tiffglob))
     i_shape = imread(s_paths[0]).shape
     s_shape = (len(s_paths),) + i_shape
