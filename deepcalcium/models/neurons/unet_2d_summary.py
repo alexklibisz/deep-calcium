@@ -129,13 +129,13 @@ def _build_compile_unet(window_shape, weights_path):
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.25)(x)
     dc_1_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.4)(x)
+    x = Dropout(0.5)(x)
     dc_2_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
@@ -160,13 +160,13 @@ def _build_compile_unet(window_shape, weights_path):
     x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.4)(x)
+    x = Dropout(0.5)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
     x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2DTranspose(32, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.25)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
     x = Conv2D(32, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
@@ -288,7 +288,7 @@ class UNet2DSummary(object):
                             monitor='val_nf_f1_adj', save_best_only=True, verbose=1),
             ReduceLROnPlateau(monitor='val_nf_f1_min', factor=0.5, patience=3,
                               cooldown=1, min_lr=1e-4, verbose=1, mode='max'),
-            EarlyStopping(monitor='val_nf_f1_min', min_delta=1e-3,
+            EarlyStopping(monitor='val_nf_f1_mean', min_delta=1e-3,
                           patience=10, verbose=1, mode='max')
 
         ] + keras_callbacks
