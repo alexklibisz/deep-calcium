@@ -1,4 +1,5 @@
 # Example script showing how to convert a custom dataset into the correct HDF5 format.
+from __future__ import division
 from glob import glob
 from os import path, mkdir
 from scipy.misc import imread
@@ -32,7 +33,7 @@ def make_dataset_series_only(name, tiffglob, datasets_dir):
         img = imread(p)
         dset_sraw[idx, :, :] = img
         dset_smax[...] = np.maximum(img, dset_smax[...])
-        dset_smean[...] += img * 1. / len(s_paths)
+        dset_smean[...] += img / len(s_paths)
 
     dsf.flush()
     dsf.close()

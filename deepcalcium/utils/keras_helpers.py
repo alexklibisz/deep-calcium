@@ -56,29 +56,3 @@ class MetricsPlotCallback(Callback):
         plt.suptitle('Epoch %d' % epoch)
         plt.savefig(self.path_png_out, dpi=200)
         plt.close()
-
-        # keys = sorted([k for k in self.logs.keys() if not k.startswith('val')])
-        # nb_metrics = len(keys)
-        # keys = iter(keys)
-        # nb_col = 6
-        # nb_row = int(ceil(nb_metrics * 1.0 / nb_col))
-        # fig, axs = plt.subplots(nb_row, nb_col, figsize=(min(nb_col * 3, 12), 3 * nb_row))
-        # for idx, ax in enumerate(fig.axes):
-        #     if idx >= nb_metrics:
-        #         ax.axis('off')
-        #         continue
-        #     key = next(keys)
-        #     ax.set_title(key)
-        #     ax.plot(self.logs[key], label='TR')
-        #     val_key = 'val_%s' % key
-        #     if val_key in self.logs:
-        #         ax.plot(self.logs[val_key], label='VL')
-        #     ax.legend()
-        # plt.suptitle('Epoch %d: %s' % (epoch, ctime()), y=1.10)
-        # plt.tight_layout(pad=0.8, w_pad=0.8, h_pad=1.0)
-        # if self.file_name is not None:
-        #     plt.savefig(self.file_name)
-        #     plt.close()
-        # else:
-        #     plt.show()
-        #     plt.close()

@@ -3,6 +3,7 @@ from time import time
 import argparse
 import logging
 import numpy as np
+import tensorflow as tf
 
 import sys
 sys.path.append('.')
@@ -11,11 +12,12 @@ from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary
 from deepcalcium.datasets.nf import nf_load_hdf5, nf_submit
 
 np.random.seed(865)
+tf.set_random_seed(np.random.randint(0, 10000))
 logging.basicConfig(level=logging.INFO)
 
 
 def training(dataset_name, weights_path):
-    '''Train on all neurofinder datasets.'''
+    '''Train on neurofinder datasets.'''
 
     # Load all sequences and masks as hdf5 File objects.
     ds_trn = nf_load_hdf5(dataset_name)
@@ -33,11 +35,11 @@ def training(dataset_name, weights_path):
         weights_path=weights_path,  # Pre-trained weights.
         shape_trn=(128, 128),       # Input/output windows to the network.
         shape_val=(512, 512),
-        batch_size_trn=16,          # Batch size.
+        batch_size_trn=20,          # Batch size.
         nb_steps_trn=250,           # Training batches / epoch.
         nb_epochs=40,               # Epochs.
         keras_callbacks=[],         # Custom keras callbacks.
-        prop_trn=0.75,              # Proportion of height for training, validation.
+        prop_trn=0.70,              # Proportion of height for training, validation.
         prop_val=0.25,
     )
 
@@ -54,7 +56,7 @@ def evaluation(dataset_name, weights_path):
         ds_trn,
         weights_path=weights_path,
         window_shape=(512, 512),
-        save=True
+        save=False
     )
 
 
@@ -72,7 +74,7 @@ def prediction(dataset_name, weights_path):
         ds_tst,                      # hdf5 sequences (no masks).
         weights_path=weights_path,   # Pre-trained weights.
         window_shape=(512, 512),     # Input/output windows to the network.
-        save=True
+        save=False
     )
 
     # Make a submission from the predicted masks.

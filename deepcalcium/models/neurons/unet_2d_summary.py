@@ -6,7 +6,8 @@ from multiprocessing import Pool
 from os import path, mkdir, remove
 from scipy.misc import imsave
 from skimage import transform
-from time import time
+from skimage.util import random_noise
+from time import time, sleep
 from tqdm import tqdm
 import logging
 import numpy as np
@@ -24,10 +25,9 @@ class ValidationMetricsCB(Callback):
         self.model_val = model_val
         self.S_summ = []
         self.M_summ = []
-        self.val_masks = []
+        self.val_coords = []
         self.names = []
         self.cpdir = cpdir
-        self.val_score_max = 0.
 
         # Store standard, flipped, rotated summary images and their corresponding
         # validation masks.
@@ -39,8 +39,9 @@ class ValidationMetricsCB(Callback):
             def append(f):
                 self.S_summ.append(f(s))
                 self.M_summ.append(f(m))
-                self.val_masks.append(f(vm))
                 self.names.append(name)
+                yy, xx = np.where(f(vm) == 1)
+                self.val_coords.append([min(yy), max(yy), min(xx), max(xx)])
 
             append(lambda x: x)
             append(np.fliplr)
@@ -48,8 +49,6 @@ class ValidationMetricsCB(Callback):
             append(lambda x: np.rot90(x, 1))
             append(lambda x: np.rot90(x, 2))
             append(lambda x: np.rot90(x, 3))
-
-        return
 
     def on_epoch_end(self, epoch, logs={}):
 
@@ -66,15 +65,22 @@ class ValidationMetricsCB(Callback):
         # Tracking precision, recall, f1 values.
         pp, rr, ff = [], [], []
 
-        for s, m, vm, name in zip(self.S_summ, self.M_summ, self.val_masks, self.names):
+        # Padding helper.
+        _, hw, ww = self.model_val.input_shape
+        pad = lambda x: np.pad(x, ((0, hw - x.shape[0]), (0, ww - x.shape[1])), 'reflect')
+
+        for s, m, vc, name in zip(self.S_summ, self.M_summ, self.val_coords, self.names):
+
+            # Coordinates for validation.
+            y0, y1, x0, x1 = vc
 
             # Batch prediction with padding.
             batch = np.zeros((1,) + self.model_val.input_shape[1:])
-            batch[0, :s.shape[0], :s.shape[1]] = s
+            batch[0] = pad(s)
             mp = self.model_val.predict(batch)[0, :s.shape[0], :s.shape[1]]
 
-            # Evaluate metrics masks multiplied by validation mask.
-            p, r, i, e, f = nf_mask_metrics(m * vm, mp.round() * vm)
+            # Evaluate metrics masks within validation area.
+            p, r, i, e, f = nf_mask_metrics(m[y0:y1, x0:x1], mp[y0:y1, x0:x1].round())
             pp.append(p)
             rr.append(r)
             ff.append(f)
@@ -82,22 +88,22 @@ class ValidationMetricsCB(Callback):
             logger.info('%s p=%.3lf r=%.3lf f=%.3lf' % (name, p, r, f))
 
         # Compute validation score with added epsilon for early epochs.
-        eps = (1e-7 * epoch * int(epoch < 5))
-        val_score = np.mean(ff) * np.min(ff) + eps
+        eps = 1e-4 * epoch if epoch else 0
 
-        logs['val_nf_adj'] = val_score
+        logs['val_nf_f1_mean'] = np.mean(ff) + eps
+        logs['val_nf_f1_median'] = np.median(ff) + eps
+        logs['val_nf_f1_min'] = np.min(ff) + eps
+        logs['val_nf_f1_adj'] = np.mean(ff) * np.min(ff) + eps
         logs['val_nf_prec'] = np.mean(pp)
         logs['val_nf_reca'] = np.mean(rr)
-        logs['val_nf_f1'] = np.mean(ff)
 
         logger.info('mean precision  = %.3lf' % logs['val_nf_prec'])
         logger.info('mean recall     = %.3lf' % logs['val_nf_reca'])
-        logger.info('mean f1         = %.3lf' % logs['val_nf_f1'])
-        logger.info('min  f1         = %.3lf' % np.min(ff))
-        logger.info('adjusted score  = %.3lf (%.3lf)' %
-                    (val_score, (val_score - self.val_score_max)))
+        logger.info('mean f1         = %.3lf' % logs['val_nf_f1_mean'])
+        logger.info('minimum f1      = %.3lf' % logs['val_nf_f1_min'])
+        logger.info('median f1       = %.3lf' % logs['val_nf_f1_median'])
+        logger.info('adjusted f1     = %.3lf' % logs['val_nf_f1_adj'])
         logger.info('validation time = %.3lf' % (time() - tic))
-        self.val_score_max = max(self.val_score_max, val_score)
 
 
 def _build_compile_unet(window_shape, weights_path):
@@ -109,62 +115,62 @@ def _build_compile_unet(window_shape, weights_path):
     import keras.backend as K
 
     logger = logging.getLogger(funcname())
+    hn = 'he_normal'
 
     x = inputs = Input(window_shape)
 
     x = Reshape(window_shape + (1,))(x)
     x = BatchNormalization(axis=3)(x)
-    x = Dropout(0.03)(x)
 
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(32, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     dc_0_out = x
 
-    x = Dropout(0.08)(x)
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Dropout(0.2)(x)
     dc_1_out = x
 
-    x = Dropout(0.1)(x)
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(128, 3, padding='same', activation='relu')(x)
-    x = Conv2D(128, 3, padding='same', activation='relu')(x)
+    x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Dropout(0.2)(x)
     dc_2_out = x
 
-    x = Dropout(0.1)(x)
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(256, 3, padding='same', activation='relu')(x)
-    x = Conv2D(256, 3, padding='same', activation='relu')(x)
-    dc_3_out = x = Dropout(0.5)(x)
+    x = Conv2D(256, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(256, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Dropout(0.5)(x)
+    dc_3_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(512, 3, padding='same', activation='relu')(x)
-    x = Conv2D(512, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(256, 2, strides=2, activation='relu')(x)
+    x = Conv2D(512, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(512, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2DTranspose(256, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
     x = Dropout(0.5)(x)
 
     x = concatenate([x, dc_3_out], axis=3)
-    x = Conv2D(256, 3, padding='same', activation='relu')(x)
-    x = Conv2D(256, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(128, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
+    x = Conv2D(256, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(256, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2DTranspose(128, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
+    x = Dropout(0.5)(x)
 
     x = concatenate([x, dc_2_out], axis=3)
-    x = Conv2D(128, 3, padding='same', activation='relu')(x)
-    x = Conv2D(128, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(64, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.1)(x)
+    x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2DTranspose(64, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
+    x = Dropout(0.2)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    x = Conv2D(64, 3, padding='same', activation='relu')(x)
-    x = Conv2DTranspose(32, 2, strides=2, activation='relu')(x)
-    x = Dropout(0.08)(x)
+    x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2DTranspose(32, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
+    x = Dropout(0.2)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
-    x = Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = Conv2D(32, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(32, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2D(2, 1, activation='softmax')(x)
     x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
 
@@ -197,9 +203,6 @@ def _build_compile_unet(window_shape, weights_path):
         dnm = K.sum(yt**2) + K.sum(yp**2) + K.epsilon()
         return (nmr / dnm)
 
-    def dice_squared_loss(yt, yp):
-        return (1 - dice_squared(yt, yp))  # + K.abs(ytpos(yt, yp) - yppos(yt, yp))
-
     model.compile(optimizer=Adam(0.002), loss='binary_crossentropy',
                   metrics=[dice_squared, ytpos, yppos, prec, reca])
 
@@ -225,12 +228,12 @@ def _summarize_mask(ds):
 
 class UNet2DSummary(object):
 
-    def __init__(self, cpdir, sequence_summary_func=_summarize_sequence,
+    def __init__(self, cpdir, series_summary_func=_summarize_sequence,
                  mask_summary_func=_summarize_mask, model_builder=_build_compile_unet):
 
         self.cpdir = cpdir
         self.model_builder = model_builder
-        self.sequence_summary_func = sequence_summary_func
+        self.series_summary_func = series_summary_func
         self.mask_summary_func = mask_summary_func
 
         if not path.exists(self.cpdir):
@@ -254,7 +257,7 @@ class UNet2DSummary(object):
         model.summary()
 
         # Pre-compute summaries once to avoid problems with accessing HDF5.
-        S_summ = [self.sequence_summary_func(ds) for ds in datasets]
+        S_summ = [self.series_summary_func(ds) for ds in datasets]
         M_summ = [self.mask_summary_func(ds) for ds in datasets]
 
         # Define generators for training and validation data.
@@ -265,21 +268,27 @@ class UNet2DSummary(object):
         # Validation setup.
         y_coords_val = [(s.shape[0] - int(s.shape[0] * prop_val), s.shape[0])
                         for s in S_summ]
+
         names = [ds.attrs['name'] for ds in datasets]
         model_val = self.model_builder(shape_val, weights_path)
 
         callbacks = [
             ValidationMetricsCB(model_val, S_summ, M_summ,
                                 names, y_coords_val, self.cpdir),
-            #ValNFMetricsCallback(S_summ, M_summ, names, window_shape, gyr_val, self.cpdir),
             CSVLogger('%s/metrics.csv' % self.cpdir),
             MetricsPlotCallback('%s/metrics.png' % self.cpdir,
                                 '%s/metrics.csv' % self.cpdir),
-            ModelCheckpoint('%s/weights_val_nf_adj.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_adj', save_best_only=True, verbose=1),
-            ReduceLROnPlateau(monitor='val_nf_adj', factor=0.5, patience=3,
+            ModelCheckpoint('%s/weights_val_nf_f1_median.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_f1_median', save_best_only=True, verbose=1),
+            ModelCheckpoint('%s/weights_val_nf_f1_mean.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_f1_mean', save_best_only=True, verbose=1),
+            ModelCheckpoint('%s/weights_val_nf_f1_min.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_f1_min', save_best_only=True, verbose=1),
+            ModelCheckpoint('%s/weights_val_nf_f1_adj.hdf5' % self.cpdir, mode='max',
+                            monitor='val_nf_f1_adj', save_best_only=True, verbose=1),
+            ReduceLROnPlateau(monitor='val_nf_f1_min', factor=0.5, patience=3,
                               cooldown=1, min_lr=1e-4, verbose=1, mode='max'),
-            EarlyStopping(monitor='val_nf_adj', min_delta=1e-3,
+            EarlyStopping(monitor='val_nf_f1_min', min_delta=1e-3,
                           patience=10, verbose=1, mode='max')
 
         ] + keras_callbacks
@@ -302,13 +311,16 @@ class UNet2DSummary(object):
             return (a, b)
 
         def stretch(a, b):
-            hw_, ww_ = rng.randint(hw, hw * 1.3), np.random.randint(ww, ww * 1.3)
+            hw_, ww_ = rng.randint(hw, hw * 1.3), rng.randint(ww, ww * 1.3)
             resize = lambda x: transform.resize(x, (hw_, ww_), preserve_range=True)
             a, b = resize(a), resize(b)
             y0 = rng.randint(0, a.shape[0] + 1 - hw)
             x0 = rng.randint(0, a.shape[1] + 1 - ww)
             y1, x1 = y0 + hw, x0 + ww
             return a[y0:y1, x0:x1], b[y0:y1, x0:x1]
+
+        # def noise(a, b):
+        #     return random_noise(a, var=np.var(a)), b
 
         augment_funcs = [
             lambda a, b: (a, b),                      # Identity.
@@ -321,13 +333,15 @@ class UNet2DSummary(object):
         # Pre-compute neuron locations for faster sampling.
         neuron_locs = []
         for ds_idx, m in enumerate(M_summ):
-            hsmin, hsmax = y_coords[ds_idx]
-            neuron_locs.append(zip(*np.where(m[hsmin:hsmax, :] == 1)))
-
-        # Cycle to sequentially sample datasets.
-        ds_idxs = cycle(np.arange(len(S_summ)))
+            ymin, ymax = y_coords[ds_idx]
+            neuron_locs.append(zip(*np.where(m[ymin:ymax, :] == 1)))
 
         while True:
+
+            # Shuffle the dataset sampling order for each new batch.
+            ds_idxs = np.arange(len(S_summ))
+            rng.shuffle(ds_idxs)
+            ds_idxs = cycle(ds_idxs)
 
             # Empty batches to fill.
             s_batch = np.zeros((batch_size, hw, ww), dtype=np.float32)
@@ -341,21 +355,21 @@ class UNet2DSummary(object):
 
                 # Dimensions. Height constrained by y range.
                 hs, ws = s.shape
-                hsmin, hsmax = y_coords[ds_idx]
+                ymin, ymax = y_coords[ds_idx]
 
                 # Pick a random neuron location within this mask to center the window.
                 cy, cx = neuron_locs[ds_idx][rng.randint(0, len(neuron_locs[ds_idx]))]
 
                 # Window boundaries with a random offset and extra care to stay in bounds.
-                cy = min(max(hsmin, cy + rng.randint(-5, 5)), hsmax)
+                cy = min(max(ymin, cy + rng.randint(-5, 5)), ymax)
                 cx = min(max(0, cx + rng.randint(-5, 5)), ws)
-                y0 = max(hsmin, int(cy - (hw / 2)))
-                y1 = min(y0 + hw, hsmax)
+                y0 = max(ymin, int(cy - (hw / 2)))
+                y1 = min(y0 + hw, ymax)
                 x0 = max(0, int(cx - (ww / 2)))
                 x1 = min(x0 + ww, ws)
 
                 # Double check.
-                assert hsmin <= y0 <= y1 <= hsmax
+                assert ymin <= y0 <= y1 <= ymax
                 assert 0 <= x0 <= x1 <= ws
 
                 # Slice and store the window.
@@ -372,10 +386,6 @@ class UNet2DSummary(object):
     def evaluate(self, datasets, weights_path=None, window_shape=(512, 512), save=False):
         '''Evaluates predicted masks vs. true masks for the given sequences..'''
 
-        import matplotlib
-        matplotlib.use('agg')
-        import matplotlib.pyplot as plt
-
         logger = logging.getLogger(funcname())
 
         model = self.model_builder(window_shape, weights_path)
@@ -383,17 +393,22 @@ class UNet2DSummary(object):
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
 
+        # Padding helper.
+        _, hw, ww = model.input_shape
+        pad = lambda x: np.pad(
+            x, ((0, hw - x.shape[0]), (0, ww - x.shape[1])), mode='reflect')
+
         # Evaluate each sequence, mask pair.
         mean_prec, mean_reca, mean_comb = 0., 0., 0.
         for ds in datasets:
             name = ds.attrs['name']
-            s = self.sequence_summary_func(ds)
+            s = self.series_summary_func(ds)
             m = self.mask_summary_func(ds)
             hs, ws = s.shape
 
             # Pad and make prediction.
             s_batch = np.zeros((1, ) + window_shape)
-            s_batch[0, :s.shape[0], :s.shape[1]] = s
+            s_batch[0] = pad(s)
             mp = model.predict(s_batch)[0, :hs, :ws].round()
 
             # Track scores.
@@ -422,6 +437,10 @@ class UNet2DSummary(object):
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
 
+        # Padding helper.
+        _, hw, ww = model.input_shape
+        pad = lambda x: np.pad(x, ((0, hw - x.shape[0]), (0, ww - x.shape[1])), 'reflect')
+
         # Store predictions.
         Mp = []
 
@@ -429,13 +448,14 @@ class UNet2DSummary(object):
         mean_prec, mean_reca, mean_comb = 0., 0., 0.
         for ds in datasets:
             name = ds.attrs['name']
-            s = self.sequence_summary_func(ds)
+            s = self.series_summary_func(ds)
             hs, ws = s.shape
 
             # Pad and make prediction.
             s_batch = np.zeros((1, ) + window_shape)
-            s_batch[0, :s.shape[0], :s.shape[1]] = s
+            s_batch[0] = pad(s)
             mp = model.predict(s_batch)[0, :hs, :ws].round()
+            assert mp.shape == s.shape
             Mp.append(mp)
 
             # Save prediction.
