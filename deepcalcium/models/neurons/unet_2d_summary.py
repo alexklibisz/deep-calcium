@@ -135,7 +135,7 @@ def _build_compile_unet(window_shape, weights_path):
     x = MaxPooling2D(2, strides=2)(x)
     x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.4)(x)
     dc_2_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
@@ -160,7 +160,7 @@ def _build_compile_unet(window_shape, weights_path):
     x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
     x = Conv2DTranspose(64, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.4)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
     x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
@@ -263,7 +263,7 @@ class UNet2DSummary(object):
         # Define generators for training and validation data.
         y_coords_trn = [(0, int(s.shape[0] * prop_trn)) for s in S_summ]
         gen_trn = self.batch_gen_fit(
-            S_summ, M_summ, y_coords_trn, batch_size_trn, shape_trn, nb_max_augment=10)
+            S_summ, M_summ, y_coords_trn, batch_size_trn, shape_trn, nb_max_augment=15)
 
         # Validation setup.
         y_coords_val = [(s.shape[0] - int(s.shape[0] * prop_val), s.shape[0])

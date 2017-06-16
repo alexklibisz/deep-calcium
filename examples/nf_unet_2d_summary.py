@@ -12,7 +12,7 @@ from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary
 from deepcalcium.datasets.nf import nf_load_hdf5, nf_submit
 
 np.random.seed(865)
-tf.set_random_seed(np.random.randint(0, 10000))
+tf.set_random_seed(7535)
 logging.basicConfig(level=logging.INFO)
 
 
