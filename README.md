@@ -1,11 +1,36 @@
 # deep-calcium
 Deep Learning Models for Calcium Imaging Data
 
+## Setup and Example
+
+This will be streamlined in the future.
+
+```
+# Clone the repository.
+git clone https://github.com/alexklibisz/deep-calcium && cd deep-calcium
+
+# Setup a virtual environment (google "virtual env wrapper").
+mkvirtualenv deep-calcium
+
+# Install dependencies inside the virtual environment.
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Make data and checkpoints directories.
+mkdir data
+mkdir checkpoints
+
+# Run one of the examples - training UNet2DS on neurofinder.00.00 dataset.
+# Open the script and read the code to understand what's happening.
+CUDA_VISIBLE_DEVICES="0" python examples/unet2ds_nf.py train neurofinder.00.00
+
+```
+
 ## Models: Neuron Segmentation
 
 ### UNet2DS: UNet with 2D Summary Images
 
-- Slightly-modified UNet model trained on Neurofinder labeled datasets with no problem-specific pre- or post-processing.
+- Trained on Neurofinder labeled datasets with no problem-specific pre- or post-processing.
 - Implemented with Keras using Tensorflow backend.
 - Latest implementation scored 0.5356 on Neurofinder competition
   - Commit: [0bda9d4b9cad71fb3685671c2e699c88d9195a24](https://github.com/alexklibisz/deep-calcium/commit/0bda9d4b9cad71fb3685671c2e699c88d9195a24)

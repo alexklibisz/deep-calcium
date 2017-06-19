@@ -2,12 +2,10 @@ from __future__ import division, print_function
 from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, EarlyStopping, CSVLogger, ReduceLROnPlateau
 from math import ceil
-from multiprocessing import Pool
 from os import path, mkdir, remove
 from scipy.misc import imsave
 from skimage import transform
-from skimage.util import random_noise
-from time import time, sleep
+from time import time
 from tqdm import tqdm
 import logging
 import numpy as np

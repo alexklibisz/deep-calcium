@@ -58,7 +58,8 @@ if __name__ == "__main__":
     if not path.exists(cpdir):
         mkdir(cpdir)
 
-    # Names and TIFF paths for datasets.
+    # Names and TIFF paths for datasets. The given TIFF paths should list all TIFFs
+    # for this dataset. i.e. "ls tiffpath" command will list all of the TIFFs.
     datasets_dir = '%s/.deep-calcium-datasets' % path.expanduser('~')
     base = '/data/stjude/Data/AuditoryCortex/'
     dataset_args = [
@@ -67,7 +68,7 @@ if __name__ == "__main__":
         ('sj.111216', base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/frame*.tif')
     ]
 
-    # Create datasets and make predictions for each.
+    # Create hdf5 datasets from the raw TIFFs.
     datasets = [make_dataset_series_only(name, tiffglob, datasets_dir)
                 for name, tiffglob in dataset_args]
 
