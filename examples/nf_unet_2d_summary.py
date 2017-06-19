@@ -27,7 +27,7 @@ def training(dataset_name, weights_path):
     ds_trn = [ds for ds in ds_trn if ds.attrs['name'] not in bad_names]
 
     # Setup model.
-    model = UNet2DSummary(cpdir='checkpoints/unet_2d_summary_128x128_nf')
+    model = UNet2DSummary(cpdir='checkpoints/unet2ds_128x128_nf')
 
     # Training.
     model.fit(
@@ -37,7 +37,7 @@ def training(dataset_name, weights_path):
         shape_val=(512, 512),
         batch_size_trn=20,          # Batch size.
         nb_steps_trn=250,           # Training batches / epoch.
-        nb_epochs=20,               # Epochs.
+        nb_epochs=10,               # Epochs.
         keras_callbacks=[],         # Custom keras callbacks.
         prop_trn=0.70,              # Proportion of height for training, validation.
         prop_val=0.25,
@@ -49,7 +49,7 @@ def evaluation(dataset_name, weights_path):
 
     ds_trn = nf_load_hdf5(dataset_name)
 
-    model = UNet2DSummary(cpdir='checkpoints/unet_2d_summary_128x128_nf')
+    model = UNet2DSummary(cpdir='checkpoints/unet2ds_128x128_nf')
 
     # Evaluate training data performance using neurofinder metrics.
     model.evaluate(
@@ -66,7 +66,7 @@ def prediction(dataset_name, weights_path):
     # Load all sequences and masks as hdf5 File objects.
     ds_tst = nf_load_hdf5(dataset_name)
 
-    model = UNet2DSummary(cpdir='checkpoints/unet_2d_summary_128x128_nf')
+    model = UNet2DSummary(cpdir='checkpoints/unet2ds_128x128_nf')
 
     # Prediction. Saves predictions to checkpoint directory and returns them
     # as numpy arrays.

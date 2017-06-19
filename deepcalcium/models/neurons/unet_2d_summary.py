@@ -278,19 +278,10 @@ class UNet2DSummary(object):
             CSVLogger('%s/metrics.csv' % self.cpdir),
             MetricsPlotCallback('%s/metrics.png' % self.cpdir,
                                 '%s/metrics.csv' % self.cpdir),
-            ModelCheckpoint('%s/weights_val_nf_f1_median.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_f1_median', save_best_only=True, verbose=1),
             ModelCheckpoint('%s/weights_val_nf_f1_mean.hdf5' % self.cpdir, mode='max',
                             monitor='val_nf_f1_mean', save_best_only=True, verbose=1),
-            ModelCheckpoint('%s/weights_val_nf_f1_min.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_f1_min', save_best_only=True, verbose=1),
-            ModelCheckpoint('%s/weights_val_nf_f1_adj.hdf5' % self.cpdir, mode='max',
-                            monitor='val_nf_f1_adj', save_best_only=True, verbose=1),
-            ReduceLROnPlateau(monitor='val_nf_f1_min', factor=0.5, patience=3,
-                              cooldown=1, min_lr=1e-4, verbose=1, mode='max'),
             EarlyStopping(monitor='val_nf_f1_mean', min_delta=1e-3,
                           patience=10, verbose=1, mode='max')
-
         ] + keras_callbacks
 
         model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
@@ -318,9 +309,6 @@ class UNet2DSummary(object):
             x0 = rng.randint(0, a.shape[1] + 1 - ww)
             y1, x1 = y0 + hw, x0 + ww
             return a[y0:y1, x0:x1], b[y0:y1, x0:x1]
-
-        # def noise(a, b):
-        #     return random_noise(a, var=np.var(a)), b
 
         augment_funcs = [
             lambda a, b: (a, b),                      # Identity.
