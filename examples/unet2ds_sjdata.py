@@ -1,4 +1,10 @@
-# Example script showing how to convert a custom dataset into the correct HDF5 format.
+# Example script for working with a new dataset:
+# - Converts raw TIFFs in a directory into HDF5 format for use with deep-calcium APIs.
+# - Downloads pre-trained weights for UNet2DS.
+# - Makes predictions on the TIFFs.
+# - Saves the predictions as PNGs.
+# The fun starts at if __name__ == "__main__":
+# Optional modifications around the lines with comment "CONFIG".
 from __future__ import division
 from glob import glob
 from os import path, mkdir, listdir
@@ -53,13 +59,12 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    # Define, make checkpoint directory.
+    # CONFIG: define the checkpoint directory where predictions will be saved.
     cpdir = 'checkpoints/sjdata'
-    if not path.exists(cpdir):
-        mkdir(cpdir)
-
-    # Names and TIFF paths for datasets. The given TIFF paths should list all TIFFs
-    # for this dataset. i.e. "ls tiffpath" command will list all of the TIFFs.
+    
+    # CONFIG: Define names and TIFF paths for datasets. The given TIFF paths should list all TIFFs
+    # for this dataset. i.e. "ls tiffpath" command will list all of the TIFFs that should be used.
+    # The names are basically an abbreviation for the dataset and should be unique to each dataset.
     datasets_dir = '%s/.deep-calcium-datasets' % path.expanduser('~')
     base = '/data/stjude/Data/AuditoryCortex/'
     dataset_args = [
@@ -68,6 +73,9 @@ if __name__ == "__main__":
         ('sj.111216', base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/frame*.tif')
     ]
 
+    if not path.exists(cpdir):
+        mkdir(cpdir)
+    
     # Create hdf5 datasets from the raw TIFFs.
     datasets = [make_dataset_series_only(name, tiffglob, datasets_dir)
                 for name, tiffglob in dataset_args]
