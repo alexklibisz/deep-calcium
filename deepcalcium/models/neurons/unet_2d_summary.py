@@ -1,12 +1,14 @@
 from __future__ import division, print_function
 from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, EarlyStopping, CSVLogger, ReduceLROnPlateau
+from keras.optimizers import Adam
 from math import ceil
 from os import path, mkdir, remove
 from scipy.misc import imsave
 from skimage import transform
 from time import time
 from tqdm import tqdm
+import keras.backend as K
 import logging
 import numpy as np
 import sys
@@ -104,111 +106,100 @@ class ValidationMetricsCB(Callback):
         logger.info('validation time = %.3lf' % (time() - tic))
 
 
-def _build_compile_unet(window_shape, weights_path):
+def _build_compile_unet(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='he_normal',
+                        conv_l2_lambda=0.0, prop_dropout_base=0.25, upsampling_or_transpose='transpose'):
     '''Builds and compiles the keras UNet model. Can be replaced from outside the class if desired. Returns a compiled keras model.'''
 
     from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, Reshape, UpSampling2D
     from keras.models import Model
-    from keras.optimizers import Adam
-    import keras.backend as K
+    from keras.regularizers import l2
 
-    logger = logging.getLogger(funcname())
-    hn = 'he_normal'
+    pdb = prop_dropout_base
+    nfb = nb_filters_base
+    cki = conv_kernel_init
+    cl2 = l2(conv_l2_lambda)
+
+    def up_layer(nb_filters, x):
+        if upsampling_or_transpose == 'transpose':
+            return Conv2DTranspose(nb_filters, 2, strides=2, activation='relu', kernel_initializer=cki, kernel_regularizer=cl2)(x)
+        else:
+            return UpSampling2D()(x)
 
     x = inputs = Input(window_shape)
-
     x = Reshape(window_shape + (1,))(x)
-    x = BatchNormalization(axis=3)(x)
+    x = BatchNormalization(axis=-1)(x)
 
-    x = Conv2D(32, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2D(32, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(nfb, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Conv2D(nfb, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
     dc_0_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.25)(x)
+    x = Conv2D(nfb * 2, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Conv2D(nfb * 2, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Dropout(pdb)(x)
     dc_1_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.5)(x)
+    x = Conv2D(nfb * 4, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Conv2D(nfb * 4, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Dropout(pdb * 2)(x)
     dc_2_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(256, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2D(256, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.5)(x)
+    x = Conv2D(nfb * 8, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Conv2D(nfb * 8, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Dropout(pdb * 2)(x)
     dc_3_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(512, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2D(512, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2DTranspose(256, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.5)(x)
+    x = Conv2D(nfb * 16, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Conv2D(nfb * 16, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = up_layer(nfb * 8, x)
+    x = Dropout(pdb * 2)(x)
 
     x = concatenate([x, dc_3_out], axis=3)
-    x = Conv2D(256, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2D(256, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2DTranspose(128, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.5)(x)
+    x = Conv2D(nfb * 8, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Conv2D(nfb * 8, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = up_layer(nfb * 4, x)
+    x = Dropout(pdb * 2)(x)
 
     x = concatenate([x, dc_2_out], axis=3)
-    x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2D(128, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2DTranspose(64, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.5)(x)
+    x = Conv2D(nfb * 4, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Conv2D(nfb * 4, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = up_layer(nfb * 2, x)
+    x = Dropout(pdb * 2)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
-    x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2D(64, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2DTranspose(32, 2, strides=2, activation='relu', kernel_initializer=hn)(x)
-    x = Dropout(0.25)(x)
+    x = Conv2D(nfb * 2, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Conv2D(nfb * 2, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = up_layer(nfb, x)
+    x = Dropout(pdb)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
-    x = Conv2D(32, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
-    x = Conv2D(32, 3, padding='same', activation='relu', kernel_initializer=hn)(x)
+    x = Conv2D(nfb, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = Conv2D(nfb, 3, padding='same', activation='relu',
+               kernel_initializer=cki, kernel_regularizer=cl2)(x)
     x = Conv2D(2, 1, activation='softmax')(x)
     x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
 
-    model = Model(inputs=inputs, outputs=x)
-
-    # True positive proportion.
-    def ytpos(yt, yp):
-        size = K.sum(K.ones_like(yt))
-        return K.sum(yt) / (size + K.epsilon())
-
-    # Predicted positive proportion.
-    def yppos(yt, yp):
-        size = K.sum(K.ones_like(yp))
-        return K.sum(K.round(yp)) / (size + K.epsilon())
-
-    def prec(yt, yp):
-        yp = K.round(yp)
-        tp = K.sum(yt * yp)
-        fp = K.sum(K.clip(yp - yt, 0, 1))
-        return tp / (tp + fp + K.epsilon())
-
-    def reca(yt, yp):
-        yp = K.round(yp)
-        tp = K.sum(yt * yp)
-        fn = K.sum(K.clip(yt - yp, 0, 1))
-        return tp / (tp + fn + K.epsilon())
-
-    def dice_squared(yt, yp):
-        nmr = 2 * K.sum(yt * yp)
-        dnm = K.sum(yt**2) + K.sum(yp**2) + K.epsilon()
-        return (nmr / dnm)
-
-    model.compile(optimizer=Adam(0.002), loss='binary_crossentropy',
-                  metrics=[dice_squared, ytpos, yppos, prec, reca])
-
-    if weights_path is not None:
-        model.load_weights(weights_path)
-        logger.info('Loaded weights from %s.' % weights_path)
-
-    return model
+    return Model(inputs=inputs, outputs=x)
 
 
 def _summarize_sequence(ds):
@@ -226,11 +217,12 @@ def _summarize_mask(ds):
 
 class UNet2DSummary(object):
 
-    def __init__(self, cpdir, series_summary_func=_summarize_sequence,
-                 mask_summary_func=_summarize_mask, model_builder=_build_compile_unet):
+    def __init__(self, cpdir='%s/.deep-calcium-datasets/tmp' % path.expanduser('~'),
+                 series_summary_func=_summarize_sequence,
+                 mask_summary_func=_summarize_mask, net_builder=_build_compile_unet):
 
         self.cpdir = cpdir
-        self.model_builder = model_builder
+        self.net_builder = net_builder
         self.series_summary_func = series_summary_func
         self.mask_summary_func = mask_summary_func
 
@@ -238,7 +230,8 @@ class UNet2DSummary(object):
             mkdir(self.cpdir)
 
     def fit(self, datasets, weights_path=None, shape_trn=(96, 96), shape_val=(512, 512), batch_size_trn=32,
-            batch_size_val=1, nb_steps_trn=200, nb_epochs=20, prop_trn=0.75, prop_val=0.25, keras_callbacks=[]):
+            batch_size_val=1, nb_steps_trn=200, nb_epochs=20, prop_trn=0.75, prop_val=0.25, keras_callbacks=[],
+            optimizer=Adam(0.002), loss='binary_crossentropy'):
         '''Constructs network based on parameters and trains with the given data.'''
 
         assert len(shape_trn) == 2
@@ -247,12 +240,59 @@ class UNet2DSummary(object):
         assert shape_val[0] == shape_val[1]
         assert 0 < prop_trn < 1
         assert 0 < prop_val < 1
+        assert loss in {'binary_crossentropy', 'dice_squared'}
 
         logger = logging.getLogger(funcname())
 
         # Define, compile neural net.
-        model = self.model_builder(shape_trn, weights_path)
+        model = self.net_builder(shape_trn)
+        model_val = self.net_builder(shape_val)
+
+        # Metric: True positive proportion.
+        def ytpos(yt, yp):
+            size = K.sum(K.ones_like(yt))
+            return K.sum(yt) / (size + K.epsilon())
+
+        # Metric: Predicted positive proportion.
+        def yppos(yt, yp):
+            size = K.sum(K.ones_like(yp))
+            return K.sum(K.round(yp)) / (size + K.epsilon())
+
+        # Metric: Binary pixel-wise precision.
+        def prec(yt, yp):
+            yp = K.round(yp)
+            tp = K.sum(yt * yp)
+            fp = K.sum(K.clip(yp - yt, 0, 1))
+            return tp / (tp + fp + K.epsilon())
+
+        # Metric: Binary pixel-wise recall.
+        def reca(yt, yp):
+            yp = K.round(yp)
+            tp = K.sum(yt * yp)
+            fn = K.sum(K.clip(yt - yp, 0, 1))
+            return tp / (tp + fn + K.epsilon())
+
+        # Metric: Squared dice coefficient from VNet paper.
+        def dice_squared(yt, yp):
+            nmr = 2 * K.sum(yt * yp)
+            dnm = K.sum(yt**2) + K.sum(yp**2) + K.epsilon()
+            return (nmr / dnm)
+
+        def dice_squared_loss(yt, yp):
+            return 1 - dice_squared(yt, yp)
+
+        if loss == 'dice_squared':
+            loss = dice_squared_loss
+        else:
+            loss = 'binary_crossentropy'
+
+        model.compile(optimizer=optimizer, loss=loss,
+                      metrics=[dice_squared, ytpos, yppos, prec, reca])
         model.summary()
+
+        if weights_path is not None:
+            model.load_weights(weights_path)
+            logger.info('Loaded weights from %s.' % weights_path)
 
         # Pre-compute summaries once to avoid problems with accessing HDF5.
         S_summ = [self.series_summary_func(ds) for ds in datasets]
@@ -268,7 +308,6 @@ class UNet2DSummary(object):
                         for s in S_summ]
 
         names = [ds.attrs['name'] for ds in datasets]
-        model_val = self.model_builder(shape_val, weights_path)
 
         callbacks = [
             ValidationMetricsCB(model_val, S_summ, M_summ,
@@ -279,11 +318,18 @@ class UNet2DSummary(object):
             ModelCheckpoint('%s/weights_val_nf_f1_mean.hdf5' % self.cpdir, mode='max',
                             monitor='val_nf_f1_mean', save_best_only=True, verbose=1),
             EarlyStopping(monitor='val_nf_f1_mean', min_delta=1e-3,
-                          patience=10, verbose=1, mode='max')
+                          patience=10, verbose=1, mode='max'),
+            EarlyStopping(monitor='reca', min_delta=1e-3,
+                          patience=4, verbose=1, mode='max'),
+            EarlyStopping(monitor='prec', min_delta=1e-3,
+                          patience=4, verbose=1, mode='max')
+
         ] + keras_callbacks
 
-        model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
-                            callbacks=callbacks, verbose=1, max_q_size=100)
+        trained = model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
+                                      callbacks=callbacks, verbose=1, max_q_size=100)
+
+        return trained.history
 
     def batch_gen_fit(self, S_summ, M_summ, y_coords, batch_size, window_shape, nb_max_augment=0):
         '''Builds and yields random batches used for training.'''
@@ -374,7 +420,10 @@ class UNet2DSummary(object):
 
         logger = logging.getLogger(funcname())
 
-        model = self.model_builder(window_shape, weights_path)
+        model = self.net_builder(window_shape)
+        if weights_path is not None:
+            model.load_weights(weights_path)
+            logger.info('Loaded weights from %s.' % weights_path)
 
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
@@ -413,12 +462,17 @@ class UNet2DSummary(object):
         logger.info('Mean prec=%.3lf, reca=%.3lf, comb=%.3lf' %
                     (mean_prec, mean_reca, mean_comb))
 
+        return mean_comb
+
     def predict(self, datasets, weights_path=None, window_shape=(512, 512), batch_size=10, save=False):
         '''Predicts masks for the given sequences. Optionally saves the masks. Returns the masks as numpy arrays in order corresponding the given sequences.'''
 
         logger = logging.getLogger(funcname())
 
-        model = self.model_builder(window_shape, weights_path)
+        model = self.net_builder(window_shape)
+        if weights_path is not None:
+            model.load_weights(weights_path)
+            logger.info('Loaded weights from %s.' % weights_path)
 
         # Currently only supporting full-sized windows.
         assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
