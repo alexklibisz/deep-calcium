@@ -126,77 +126,62 @@ def _build_compile_unet(window_shape=(128, 128), nb_filters_base=32, conv_kernel
         else:
             return UpSampling2D()(x)
 
+    def conv_layer(nb_filters, x):
+        return Conv2D(nb_filters, 3, padding='same', activation='relu', kernel_initializer=cki, kernel_regularizer=cl2)(x)
+
     x = inputs = Input(window_shape)
     x = Reshape(window_shape + (1,))(x)
     x = BatchNormalization(axis=-1)(x)
 
-    x = Conv2D(nfb, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(nfb, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = conv_layer(nfb, x)
+    x = conv_layer(nfb, x)
     dc_0_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(nfb * 2, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(nfb * 2, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = conv_layer(nfb * 2, x)
+    x = conv_layer(nfb * 2, x)
     x = Dropout(pdb)(x)
     dc_1_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(nfb * 4, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(nfb * 4, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = conv_layer(nfb * 4, x)
+    x = conv_layer(nfb * 4, x)
     x = Dropout(pdb * 2)(x)
     dc_2_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(nfb * 8, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(nfb * 8, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = conv_layer(nfb * 8, x)
+    x = conv_layer(nfb * 8, x)
     x = Dropout(pdb * 2)(x)
     dc_3_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
-    x = Conv2D(nfb * 16, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(nfb * 16, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = conv_layer(nfb * 16, x)
+    x = conv_layer(nfb * 16, x)
     x = up_layer(nfb * 8, x)
     x = Dropout(pdb * 2)(x)
 
     x = concatenate([x, dc_3_out], axis=3)
-    x = Conv2D(nfb * 8, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(nfb * 8, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = conv_layer(nfb * 8, x)
+    x = conv_layer(nfb * 8, x)
     x = up_layer(nfb * 4, x)
     x = Dropout(pdb * 2)(x)
 
     x = concatenate([x, dc_2_out], axis=3)
-    x = Conv2D(nfb * 4, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(nfb * 4, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = conv_layer(nfb * 4, x)
+    x = conv_layer(nfb * 4, x)
     x = up_layer(nfb * 2, x)
     x = Dropout(pdb * 2)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
-    x = Conv2D(nfb * 2, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(nfb * 2, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = conv_layer(nfb * 2, x)
+    x = conv_layer(nfb * 2, x)
     x = up_layer(nfb, x)
     x = Dropout(pdb)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
-    x = Conv2D(nfb, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(nfb, 3, padding='same', activation='relu',
-               kernel_initializer=cki, kernel_regularizer=cl2)(x)
+    x = conv_layer(nfb, x)
+    x = conv_layer(nfb, x)
     x = Conv2D(2, 1)(x)
     x = Activation('softmax')(x)
     x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
