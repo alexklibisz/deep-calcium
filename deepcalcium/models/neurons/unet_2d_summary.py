@@ -8,6 +8,7 @@ from scipy.misc import imsave
 from skimage import transform
 from time import time
 from tqdm import tqdm
+import json
 import keras.backend as K
 import logging
 import numpy as np
@@ -110,7 +111,7 @@ def _build_compile_unet(window_shape=(128, 128), nb_filters_base=32, conv_kernel
                         conv_l2_lambda=0.0, prop_dropout_base=0.25, upsampling_or_transpose='transpose'):
     '''Builds and compiles the keras UNet model. Can be replaced from outside the class if desired. Returns a compiled keras model.'''
 
-    from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, Reshape, UpSampling2D
+    from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, Reshape, UpSampling2D, Activation
     from keras.models import Model
     from keras.regularizers import l2
 
@@ -196,7 +197,8 @@ def _build_compile_unet(window_shape=(128, 128), nb_filters_base=32, conv_kernel
                kernel_initializer=cki, kernel_regularizer=cl2)(x)
     x = Conv2D(nfb, 3, padding='same', activation='relu',
                kernel_initializer=cki, kernel_regularizer=cl2)(x)
-    x = Conv2D(2, 1, activation='softmax')(x)
+    x = Conv2D(2, 1)(x)
+    x = Activation('softmax')(x)
     x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
 
     return Model(inputs=inputs, outputs=x)
@@ -247,6 +249,7 @@ class UNet2DSummary(object):
         # Define, compile neural net.
         model = self.net_builder(shape_trn)
         model_val = self.net_builder(shape_val)
+        json.dump(model.to_json(), open('%s/model.json' % self.cpdir, 'w'), indent=2)
 
         # Metric: True positive proportion.
         def ytpos(yt, yp):
