@@ -189,7 +189,7 @@ def _build_compile_unet(window_shape=(128, 128), nb_filters_base=32, conv_kernel
     return Model(inputs=inputs, outputs=x)
 
 
-def _summarize_sequence(ds):
+def _summarize_series(ds):
     assert 'series/mean' in ds
     summ = ds.get('series/mean')[...] * 1. / 2**16
     assert np.min(summ) >= 0
@@ -205,7 +205,7 @@ def _summarize_mask(ds):
 class UNet2DSummary(object):
 
     def __init__(self, cpdir='%s/.deep-calcium-datasets/tmp' % path.expanduser('~'),
-                 series_summary_func=_summarize_sequence,
+                 series_summary_func=_summarize_series,
                  mask_summary_func=_summarize_mask, net_builder=_build_compile_unet):
 
         self.cpdir = cpdir
@@ -219,7 +219,24 @@ class UNet2DSummary(object):
     def fit(self, datasets, weights_path=None, shape_trn=(96, 96), shape_val=(512, 512), batch_size_trn=32,
             batch_size_val=1, nb_steps_trn=200, nb_epochs=20, prop_trn=0.75, prop_val=0.25, keras_callbacks=[],
             optimizer=Adam(0.002), loss='binary_crossentropy'):
-        '''Constructs network based on parameters and trains with the given data.'''
+        """Constructs network based on parameters and trains with the given data.
+
+        # Arguments
+            datasets: List of HDF5 datasets. Each of these will be passed to self.series_summary_func and 
+                self.mask_summary_func to compute its series and mask summaries, so the HDF5 structure 
+                should be compatible with those functions.
+            weights_path: filesystem path to weights that should be loaded into the network.
+            shape_trn: (height, width) shape of the windows cropped for training.
+            shape_val: (height, width) shape of the windows used for validation.
+            batch_size_trn: Batch size used for training.
+            batch_size_val: Batch size used for validation.
+            nb_steps_trn: Number of updates per training epoch.
+            prop_trn: Proportion of each summary image used to train, cropped from the top of the image.
+            prop_val: Proportion of each summary image used to validate, cropped from the bottom of the image.
+            keras_callbacks: List of callbacks appended to internal callbacks for training.
+            optimizer: Instanitated keras optimizer.
+            loss: Loss function, currently either binary_crossentropy or dice_squared from https://arxiv.org/abs/1606.04797.
+        """
 
         assert len(shape_trn) == 2
         assert len(shape_val) == 2
