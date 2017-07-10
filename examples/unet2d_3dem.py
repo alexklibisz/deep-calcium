@@ -1,17 +1,17 @@
 # Example of using UNet for frame-by-frame segmentation on the 3DEM
 # dataset: http://cvlab.epfl.ch/data/em.
-# The following metrics are reached after training for 10 epochs with
-# keras' built-in binary_crossentropy loss.
-# Training loss  0.01529115
-# Training F1    0.94134005
-# Training prec  0.94447301
-# Training reca  0.93936959
-# Training jacc  0.83308420
-# Testing  loss  0.03041491
-# Testing  F1    0.90911399
-# Testing  prec  0.90598474
-# Testing  reca  0.91567677
-# Testing  jacc  0.78539054
+# Trained for 30 epochs (~31 minutes) with random cropping, flips, rotations.
+# Yields the following evaluation metrics:
+# Training loss  0.01290280
+# Training F1    0.95040079
+# Training prec  0.95160979
+# Training reca  0.94988897
+# Training jacc  0.86003538
+# Testing  loss  0.02667904
+# Testing  F1    0.91998922
+# Testing  prec  0.91170582
+# Testing  reca  0.93042168
+# Testing  jacc  0.81421944
 from keras.models import load_model, Model
 from keras.layers import Input, Lambda
 from keras.callbacks import ModelCheckpoint, CSVLogger
@@ -90,7 +90,7 @@ def train_3DEM(model_path, weights_path):
     path_msks_trn = '%s/training_groundtruth.tif' % cpdir
     path_imgs_tst = '%s/testing.tif' % cpdir
     path_msks_tst = '%s/testing_groundtruth.tif' % cpdir
-    nb_epochs = 10
+    nb_epochs = 30
     nb_steps_trn = 150
     nb_steps_tst = 12
     batch_size = 16
@@ -164,13 +164,13 @@ def predict_3DEM(model_path):
 
     # Training evaluation.
     print('Training evaluation...')
-    metrics_tsts = net.evaluate(imgs_trn, msks_trn, batch_size=1, verbose=0)
+    metrics_tsts = net.evaluate(imgs_trn, msks_trn, batch_size=1)
     for name, val in zip(net.metrics_names, metrics_tsts):
         print('Training %-5s %.8lf' % (name, val))
 
     # Testing evaluation.
     print('Testing  evaluation...')
-    metrics_tsts = net.evaluate(imgs_tst, msks_tst, batch_size=1, verbose=0)
+    metrics_tsts = net.evaluate(imgs_tst, msks_tst, batch_size=1)
     for name, val in zip(net.metrics_names, metrics_tsts):
         print('Testing  %-5s %.8lf' % (name, val))
 
