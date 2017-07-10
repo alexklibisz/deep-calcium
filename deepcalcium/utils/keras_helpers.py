@@ -31,6 +31,7 @@ def F1(yt, yp):
 
 def jacc(yt, yp):
     """Keras Jaccard coefficient metric."""
+    yp = K.round(yp)
     union = K.sum(yt * yp)
     return union / (K.sum(yt) + K.sum(yp) - union)
 

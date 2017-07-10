@@ -2,16 +2,26 @@
 # dataset: http://cvlab.epfl.ch/data/em.
 # Trained for 30 epochs (~31 minutes) with random cropping, flips, rotations.
 # Yields the following evaluation metrics:
-# Training loss  0.01290280
-# Training F1    0.95040079
-# Training prec  0.95160979
-# Training reca  0.94988897
-# Training jacc  0.86003538
-# Testing  loss  0.02667904
-# Testing  F1    0.91998922
-# Testing  prec  0.91170582
-# Testing  reca  0.93042168
-# Testing  jacc  0.81421944
+# Training data with no test-time augmentation:
+# F1       0.95314318
+# prec     0.95377219
+# reca     0.95251507
+# jacc     0.91048104
+# Training data with 8x test-time augmentation averaged:
+# F1       0.95245916
+# prec     0.95441848
+# reca     0.95050794
+# jacc     0.90923351
+# Testing data with no test-time augmentation:
+# F1       0.92137849
+# prec     0.91044456
+# reca     0.93257827
+# jacc     0.85421860
+# Testing data with 8x test-time augmentation averaged:
+# F1       0.92709804
+# prec     0.91988462
+# reca     0.93442547
+# jacc     0.86410320
 from keras.models import load_model, Model
 from keras.layers import Input, Lambda
 from keras.callbacks import ModelCheckpoint, CSVLogger
@@ -29,6 +39,7 @@ sys.path.append('.')
 
 from deepcalcium.models.neurons.unet_2d_summary import unet_builder
 from deepcalcium.utils.keras_helpers import F1, prec, reca, jacc, load_model_with_new_input_shape
+from deepcalcium.utils.data_utils import INVERTIBLE_2D_BATCH_AUGMENTATIONS
 
 np.random.seed(865)
 tf.set_random_seed(7535)
@@ -97,10 +108,10 @@ def train_3DEM(model_path, weights_path):
     window_shape = (256, 256)
 
     # Import data and define generators.
-    imgs_trn = tif.imread(path_imgs_trn) / 255.
-    msks_trn = tif.imread(path_msks_trn) / 255.
-    imgs_tst = tif.imread(path_imgs_tst) / 255.
-    msks_tst = tif.imread(path_msks_tst) / 255.
+    imgs_trn = (tif.imread(path_imgs_trn) / 255.).astype(np.float16)
+    msks_trn = (tif.imread(path_msks_trn) / 255.).astype(np.uint8)
+    imgs_tst = (tif.imread(path_imgs_tst) / 255.).astype(np.float16)
+    msks_tst = (tif.imread(path_msks_tst) / 255.).astype(np.uint8)
     gen_trn = batch_gen(imgs_trn, msks_trn, window_shape, batch_size, augment=True)
     gen_tst = batch_gen(imgs_tst, msks_tst, window_shape, batch_size, augment=False)
 
@@ -132,6 +143,15 @@ def train_3DEM(model_path, weights_path):
                       validation_steps=nb_steps_tst)
 
 
+def evaluate_3DEM(yt, yp, metrics=[F1, prec, reca, jacc]):
+    import keras.backend as K
+    kyt = K.variable(yt, dtype='float32')
+    kyp = K.variable(yp, dtype='float32')
+    for metric in metrics:
+        mval = K.get_value(metric(kyt, kyp))
+        print('%-8s %.8lf' % (metric.__name__, mval))
+
+
 def predict_3DEM(model_path):
 
     cpdir = 'checkpoints/unet2d_3dem'
@@ -144,35 +164,49 @@ def predict_3DEM(model_path):
 
     # Load tiffs.
     print('Loading tiffs..')
-    imgs_trn = tif.imread(path_imgs_trn) / 255.
-    msks_trn = tif.imread(path_msks_trn) / 255.
-    imgs_tst = tif.imread(path_imgs_tst) / 255.
-    msks_tst = tif.imread(path_msks_tst) / 255.
+    imgs_trn = (tif.imread(path_imgs_trn) / 255.).astype(np.float16)
+    msks_trn = (tif.imread(path_msks_trn) / 255.).astype(np.uint8)
+    imgs_tst = (tif.imread(path_imgs_tst) / 255.).astype(np.float16)
+    msks_tst = (tif.imread(path_msks_tst) / 255.).astype(np.uint8)
 
-    # Pad to fit window shape.
+    # Pad images to fit window shape. Masks keep same shape.
     print('Padding tiffs..')
-    h, w = window_shape
-    pad_shape = lambda x: ((0, 0), (0, h - x.shape[1]), (0, w - x.shape[2]))
+    h0, w0 = msks_trn.shape[1:]
+    h1, w1 = window_shape
+    crop = lambda x: x[:, :h0, :w0]
+    pad_shape = lambda x: ((0, 0), (0, h1 - x.shape[1]), (0, w1 - x.shape[2]))
     imgs_trn = np.pad(imgs_trn, pad_shape(imgs_trn), mode='reflect')
-    msks_trn = np.pad(msks_trn, pad_shape(msks_trn), mode='reflect')
     imgs_tst = np.pad(imgs_tst, pad_shape(imgs_tst), mode='reflect')
-    msks_tst = np.pad(msks_tst, pad_shape(msks_tst), mode='reflect')
 
     # Load net and set it to use window_shape input size.
     cobj = {'F1': F1, 'prec': prec, 'reca': reca, 'jacc': jacc, 'tf': tf}
     net = load_model_with_new_input_shape(model_path, window_shape, custom_objects=cobj)
 
-    # Training evaluation.
-    print('Training evaluation...')
-    metrics_tsts = net.evaluate(imgs_trn, msks_trn, batch_size=1)
-    for name, val in zip(net.metrics_names, metrics_tsts):
-        print('Training %-5s %.8lf' % (name, val))
+    print('Training evaluation, no test-time augmentation...')
+    prds_trn = net.predict(imgs_trn, batch_size=4, verbose=1)
+    evaluate_3DEM(msks_trn, crop(prds_trn))
 
-    # Testing evaluation.
-    print('Testing  evaluation...')
-    metrics_tsts = net.evaluate(imgs_tst, msks_tst, batch_size=1)
-    for name, val in zip(net.metrics_names, metrics_tsts):
-        print('Testing  %-5s %.8lf' % (name, val))
+    print('Training evaluation with averaged test-time augmentation...')
+    prds_trn = np.zeros(msks_trn.shape)
+    for name, aug, inv in INVERTIBLE_2D_BATCH_AUGMENTATIONS:
+        print('Augmentation: %s..' % name)
+        assert np.all(imgs_trn == inv(aug(imgs_trn)))
+        p = net.predict(aug(imgs_trn), batch_size=4, verbose=1)
+        prds_trn += crop(inv(p)) / len(INVERTIBLE_2D_BATCH_AUGMENTATIONS)
+    evaluate_3DEM(msks_trn, prds_trn)
+
+    print('Testing evaluation, no test-time augmentation...')
+    prds_tst = net.predict(imgs_tst, batch_size=4, verbose=1)
+    evaluate_3DEM(msks_tst, crop(prds_tst))
+
+    print('Testing evaluation with averaged test-time augmentation...')
+    prds_tst = np.zeros(msks_tst.shape)
+    for name, aug, inv in INVERTIBLE_2D_BATCH_AUGMENTATIONS:
+        print('Augmentation: %s..' % name)
+        assert np.all(imgs_tst == inv(aug(imgs_tst)))
+        p = net.predict(aug(imgs_tst), batch_size=4, verbose=1)
+        prds_tst += crop(inv(p)) / len(INVERTIBLE_2D_BATCH_AUGMENTATIONS)
+    evaluate_3DEM(msks_tst, prds_tst)
 
 
 if __name__ == "__main__":
