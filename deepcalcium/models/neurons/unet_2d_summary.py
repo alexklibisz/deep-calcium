@@ -1,7 +1,13 @@
+# U-Net 2D Summary module.
+# The UNet2DS class is a wrapper around the UNet architecture that simplifies
+# training and validation on calcium imaging segmentation tasks like Neurofinder.
+# The code for building the UNet network can easily be extracted and re-used
+# independent of the specific calcium-imaging features.
 from __future__ import division, print_function
 from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, EarlyStopping, CSVLogger, ReduceLROnPlateau
 from keras.optimizers import Adam
+from keras_contrib.callbacks import DeadReluDetector
 from math import ceil
 from os import path, mkdir, remove
 from scipy.misc import imsave
@@ -12,6 +18,7 @@ import json
 import keras.backend as K
 import logging
 import numpy as np
+import tensorflow as tf
 import sys
 
 from deepcalcium.utils.runtime import funcname
@@ -107,15 +114,30 @@ class ValidationMetricsCB(Callback):
         logger.info('validation time = %.3lf' % (time() - tic))
 
 
-def _build_compile_unet(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='he_normal',
-                        conv_l2_lambda=0.0, prop_dropout_base=0.25, upsampling_or_transpose='transpose'):
-    '''Builds and compiles the keras UNet model. Can be replaced from outside the class if desired. Returns a compiled keras model.'''
+def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='he_normal',
+                 conv_l2_lambda=0.0, prop_dropout_base=0.25, upsampling_or_transpose='transpose'):
+    """Builds and returns the UNet architecture using Keras.
+
+    Arguments:
+        window_shape: tuple of two equivalent integers defining the input/output window shape.
+        nb_filters_base: number of convolutional filters used at the first layer. This is doubled
+            after every pooling layer, four times until the bottleneck layer, and then it gets
+            divided by two four times to the output layer.
+        conv_kernel_init: weight initialization for the convolutional kernels. He initialization
+            is considered best-practice when using ReLU activations, as is the case in this network.
+        conv_l2_lambda: lambda term for l2 regularization at each convolutional kernel.
+        prop_dropout_base: proportion of dropout after the first pooling layer. Two-times the
+            proportion is used after subsequent pooling layers on the downward pass.
+        upsampling_or_transpose: whether to use Upsampling2D or Conv2DTranspose layers on the upward
+            pass. The original paper used Conv2DTranspose ("Deconvolution").
+
+    """
 
     from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, Reshape, UpSampling2D, Activation
     from keras.models import Model
     from keras.regularizers import l2
 
-    pdb = prop_dropout_base
+    drp = prop_dropout_base
     nfb = nb_filters_base
     cki = conv_kernel_init
     cl2 = l2(conv_l2_lambda)
@@ -130,7 +152,7 @@ def _build_compile_unet(window_shape=(128, 128), nb_filters_base=32, conv_kernel
         return Conv2D(nb_filters, 3, padding='same', activation='relu', kernel_initializer=cki, kernel_regularizer=cl2)(x)
 
     x = inputs = Input(window_shape)
-    x = Reshape(window_shape + (1,))(x)
+    x = Lambda(lambda x: K.expand_dims(x))(x)
     x = BatchNormalization(axis=-1)(x)
 
     x = conv_layer(nfb, x)
@@ -140,51 +162,52 @@ def _build_compile_unet(window_shape=(128, 128), nb_filters_base=32, conv_kernel
     x = MaxPooling2D(2, strides=2)(x)
     x = conv_layer(nfb * 2, x)
     x = conv_layer(nfb * 2, x)
-    x = Dropout(pdb)(x)
+    x = Dropout(drp)(x)
     dc_1_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
     x = conv_layer(nfb * 4, x)
     x = conv_layer(nfb * 4, x)
-    x = Dropout(pdb * 2)(x)
+    x = Dropout(drp * 2)(x)
     dc_2_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
     x = conv_layer(nfb * 8, x)
     x = conv_layer(nfb * 8, x)
-    x = Dropout(pdb * 2)(x)
+    x = Dropout(drp * 2)(x)
     dc_3_out = x
 
     x = MaxPooling2D(2, strides=2)(x)
     x = conv_layer(nfb * 16, x)
     x = conv_layer(nfb * 16, x)
     x = up_layer(nfb * 8, x)
-    x = Dropout(pdb * 2)(x)
+    x = Dropout(drp * 2)(x)
 
     x = concatenate([x, dc_3_out], axis=3)
     x = conv_layer(nfb * 8, x)
     x = conv_layer(nfb * 8, x)
     x = up_layer(nfb * 4, x)
-    x = Dropout(pdb * 2)(x)
+    x = Dropout(drp * 2)(x)
 
     x = concatenate([x, dc_2_out], axis=3)
     x = conv_layer(nfb * 4, x)
     x = conv_layer(nfb * 4, x)
     x = up_layer(nfb * 2, x)
-    x = Dropout(pdb * 2)(x)
+    x = Dropout(drp * 2)(x)
 
     x = concatenate([x, dc_1_out], axis=3)
     x = conv_layer(nfb * 2, x)
     x = conv_layer(nfb * 2, x)
     x = up_layer(nfb, x)
-    x = Dropout(pdb)(x)
+    x = Dropout(drp)(x)
 
     x = concatenate([x, dc_0_out], axis=3)
     x = conv_layer(nfb, x)
     x = conv_layer(nfb, x)
     x = Conv2D(2, 1)(x)
     x = Activation('softmax')(x)
-    x = Lambda(lambda x: x[:, :, :, 1], output_shape=window_shape)(x)
+    x = Lambda(lambda x: x[:, :, :, -1])(x)
+    # x = Lambda(lambda x: x[:, :, :, -1], output_shape=window_shape)(x)
 
     return Model(inputs=inputs, outputs=x)
 
@@ -206,7 +229,7 @@ class UNet2DSummary(object):
 
     def __init__(self, cpdir='%s/.deep-calcium-datasets/tmp' % path.expanduser('~'),
                  series_summary_func=_summarize_series,
-                 mask_summary_func=_summarize_mask, net_builder=_build_compile_unet):
+                 mask_summary_func=_summarize_mask, net_builder=unet_builder):
 
         self.cpdir = cpdir
         self.net_builder = net_builder
@@ -327,7 +350,8 @@ class UNet2DSummary(object):
             EarlyStopping(monitor='reca', min_delta=1e-3,
                           patience=4, verbose=1, mode='max'),
             EarlyStopping(monitor='prec', min_delta=1e-3,
-                          patience=4, verbose=1, mode='max')
+                          patience=4, verbose=1, mode='max'),
+            DeadReluDetector(next(gen_trn)[0], True)
 
         ] + keras_callbacks
 
@@ -337,7 +361,23 @@ class UNet2DSummary(object):
         return trained.history
 
     def batch_gen_fit(self, S_summ, M_summ, y_coords, batch_size, window_shape, nb_max_augment=0):
-        '''Builds and yields random batches used for training.'''
+        """Builds and yields batches of image windows and corresponding mask windows for training.
+        Includes random data augmentation.
+
+        Arguments:
+            S_summ: list of series summary images stored as individual 2D numpy arrays. They can be
+                different sizes, which is why it's not all just one 3D numpy array.
+            M_summ: list of mask summary images corresponding to the series summary images. E.g.
+                M_summ[i] is the 2D mask corresponding to the 2D summary image at S_summ[i].
+            y_coords: list of tuples defining the min and max y-coordinate (rows) that should be 
+                sampled for generating batches. Order corresponds to the S_summ and M_summ arrays.
+                E.g. if y_coords[i] = (0, 300), then the generator will only sample S_summ[i] and M_summ[i]
+                from within that range of rows. This creates a separation such that one instance of the
+                generator can be used for training and another instance for validation.
+            window_shape: shape of the windows that should be sampled.
+            nb_max_augment: the max number of random augmentations to apply. 
+
+        """
 
         logger = logging.getLogger(funcname())
         rng = np.random
@@ -421,7 +461,7 @@ class UNet2DSummary(object):
             yield s_batch, m_batch
 
     def evaluate(self, datasets, weights_path=None, window_shape=(512, 512), save=False):
-        '''Evaluates predicted masks vs. true masks for the given sequences..'''
+        """Evaluates predicted masks vs. true masks for the given sequences."""
 
         logger = logging.getLogger(funcname())
 
@@ -470,7 +510,7 @@ class UNet2DSummary(object):
         return mean_comb
 
     def predict(self, datasets, weights_path=None, window_shape=(512, 512), batch_size=10, save=False):
-        '''Predicts masks for the given sequences. Optionally saves the masks. Returns the masks as numpy arrays in order corresponding the given sequences.'''
+        """Predicts masks for the given sequences. Optionally saves the masks. Returns the masks as numpy arrays in order corresponding the given sequences."""
 
         logger = logging.getLogger(funcname())
 

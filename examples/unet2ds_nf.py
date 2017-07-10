@@ -37,7 +37,7 @@ def training(dataset_name, weights_path):
         shape_val=(512, 512),
         batch_size_trn=20,          # Batch size.
         nb_steps_trn=250,           # Training batches / epoch.
-        nb_epochs=10,               # Epochs.
+        nb_epochs=15,               # Epochs.
         keras_callbacks=[],         # Custom keras callbacks.
         prop_trn=0.70,              # Proportion of height for training, validation.
         prop_val=0.25,
