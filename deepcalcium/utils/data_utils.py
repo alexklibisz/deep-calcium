@@ -3,7 +3,7 @@ import numpy as np
 # Augmentations that can be applied to a batch of 2D images and inverted.
 # Structure is the augmentation name, the augmentation, and the inverse
 # of the augmentation. Intended for test-time augmentation for segmentation.
-INVERTIBLE_2D_BATCH_AUGMENTATIONS = [
+INVERTIBLE_2D_AUGMENTATIONS = [
     ('identity',
      lambda x: x,
      lambda x: x),

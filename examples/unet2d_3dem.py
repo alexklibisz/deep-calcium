@@ -1,7 +1,7 @@
 # Example of using UNet for frame-by-frame segmentation on the 3DEM
 # dataset: http://cvlab.epfl.ch/data/em.
-# Trained for 30 epochs (~31 minutes) with random cropping, flips, rotations.
-# Yields the following evaluation metrics:
+# Trained for 30 epochs (~31 minutes) with random cropping, flips, rotations
+# using binary_crossentropy objective yields the following evaluation metrics:
 # Training data with no test-time augmentation:
 # F1       0.95314318
 # prec     0.95377219
@@ -22,6 +22,8 @@
 # prec     0.91988462
 # reca     0.93442547
 # jacc     0.86410320
+# Training with the Jaccard loss results in a slightly worse Jaccard score (0.853),
+# but this could also be attributed to a non-optimal learning rate.
 from keras.models import load_model, Model
 from keras.layers import Input, Lambda
 from keras.callbacks import ModelCheckpoint, CSVLogger
@@ -38,8 +40,8 @@ import sys
 sys.path.append('.')
 
 from deepcalcium.models.neurons.unet_2d_summary import unet_builder
-from deepcalcium.utils.keras_helpers import F1, prec, reca, jacc, load_model_with_new_input_shape
-from deepcalcium.utils.data_utils import INVERTIBLE_2D_BATCH_AUGMENTATIONS
+from deepcalcium.utils.keras_helpers import F1, prec, reca, jacc, dice, dicesq, load_model_with_new_input_shape, MetricsPlotCallback
+from deepcalcium.utils.data_utils import INVERTIBLE_2D_AUGMENTATIONS
 
 np.random.seed(865)
 tf.set_random_seed(7535)
@@ -101,27 +103,28 @@ def train_3DEM(model_path, weights_path):
     path_msks_trn = '%s/training_groundtruth.tif' % cpdir
     path_imgs_tst = '%s/testing.tif' % cpdir
     path_msks_tst = '%s/testing_groundtruth.tif' % cpdir
-    nb_epochs = 30
+    nb_epochs = 100
     nb_steps_trn = 150
     nb_steps_tst = 12
     batch_size = 16
     window_shape = (256, 256)
 
     # Import data and define generators.
-    imgs_trn = (tif.imread(path_imgs_trn) / 255.).astype(np.float16)
-    msks_trn = (tif.imread(path_msks_trn) / 255.).astype(np.uint8)
-    imgs_tst = (tif.imread(path_imgs_tst) / 255.).astype(np.float16)
-    msks_tst = (tif.imread(path_msks_tst) / 255.).astype(np.uint8)
+    imgs_trn = tif.imread(path_imgs_trn) / 255.
+    msks_trn = tif.imread(path_msks_trn) / 255.
+    imgs_tst = tif.imread(path_imgs_tst) / 255.
+    msks_tst = tif.imread(path_msks_tst) / 255.
     gen_trn = batch_gen(imgs_trn, msks_trn, window_shape, batch_size, augment=True)
     gen_tst = batch_gen(imgs_tst, msks_tst, window_shape, batch_size, augment=False)
 
     # Define UNet Keras model.
     if model_path:
-        cobj = {'F1': F1, 'prec': prec, 'reca': reca, 'jacc': jacc, 'tf': tf}
+        cobj = {'F1': F1, 'prec': prec, 'reca': reca, 'jacc': jacc,
+                'dice': dice, 'dicesq': dicesq, 'tf': tf, 'jacc_loss': jacc_loss}
         net = load_model_with_new_input_shape(model_path, window_shape,
                                               custom_objects=cobj)
     else:
-        net = unet_builder(window_shape)
+        net = unet_builder(window_shape, prop_dropout_base=0.3)
 
     if weights_path:
         net.load_weights(weights_path)
@@ -130,12 +133,13 @@ def train_3DEM(model_path, weights_path):
     cb = [
         ModelCheckpoint(model_save_path, monitor='val_jacc', mode='max',
                         save_best_only=True, verbose=1),
-        CSVLogger('%s/history.csv' % cpdir)
+        CSVLogger('%s/history.csv' % cpdir),
+        MetricsPlotCallback('%s/metrics.png' % cpdir)
     ]
 
     # Network compilation with loss and metrics.
     net.compile(optimizer=Adam(0.0007), loss='binary_crossentropy',
-                metrics=[F1, prec, reca, jacc])
+                metrics=[F1, prec, reca, jacc, dice, dicesq])
 
     # Train using generators for training and validation data.
     net.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
@@ -162,12 +166,17 @@ def predict_3DEM(model_path):
     path_msks_tst = '%s/testing_groundtruth.tif' % cpdir
     window_shape = (1024, 1024)
 
+    # Load net and set it to use window_shape input size.
+    cobj = {'F1': F1, 'prec': prec, 'reca': reca, 'jacc': jacc,
+            'dice': dice, 'dicesq': dicesq, 'tf': tf}
+    net = load_model_with_new_input_shape(model_path, window_shape, custom_objects=cobj)
+
     # Load tiffs.
     print('Loading tiffs..')
-    imgs_trn = (tif.imread(path_imgs_trn) / 255.).astype(np.float16)
-    msks_trn = (tif.imread(path_msks_trn) / 255.).astype(np.uint8)
-    imgs_tst = (tif.imread(path_imgs_tst) / 255.).astype(np.float16)
-    msks_tst = (tif.imread(path_msks_tst) / 255.).astype(np.uint8)
+    imgs_trn = tif.imread(path_imgs_trn) / 255.
+    msks_trn = tif.imread(path_msks_trn) / 255.
+    imgs_tst = tif.imread(path_imgs_tst) / 255.
+    msks_tst = tif.imread(path_msks_tst) / 255.
 
     # Pad images to fit window shape. Masks keep same shape.
     print('Padding tiffs..')
@@ -178,21 +187,17 @@ def predict_3DEM(model_path):
     imgs_trn = np.pad(imgs_trn, pad_shape(imgs_trn), mode='reflect')
     imgs_tst = np.pad(imgs_tst, pad_shape(imgs_tst), mode='reflect')
 
-    # Load net and set it to use window_shape input size.
-    cobj = {'F1': F1, 'prec': prec, 'reca': reca, 'jacc': jacc, 'tf': tf}
-    net = load_model_with_new_input_shape(model_path, window_shape, custom_objects=cobj)
-
     print('Training evaluation, no test-time augmentation...')
     prds_trn = net.predict(imgs_trn, batch_size=4, verbose=1)
     evaluate_3DEM(msks_trn, crop(prds_trn))
 
     print('Training evaluation with averaged test-time augmentation...')
     prds_trn = np.zeros(msks_trn.shape)
-    for name, aug, inv in INVERTIBLE_2D_BATCH_AUGMENTATIONS:
+    for name, aug, inv in INVERTIBLE_2D_AUGMENTATIONS:
         print('Augmentation: %s..' % name)
         assert np.all(imgs_trn == inv(aug(imgs_trn)))
         p = net.predict(aug(imgs_trn), batch_size=4, verbose=1)
-        prds_trn += crop(inv(p)) / len(INVERTIBLE_2D_BATCH_AUGMENTATIONS)
+        prds_trn += crop(inv(p)) / len(INVERTIBLE_2D_AUGMENTATIONS)
     evaluate_3DEM(msks_trn, prds_trn)
 
     print('Testing evaluation, no test-time augmentation...')
@@ -201,11 +206,11 @@ def predict_3DEM(model_path):
 
     print('Testing evaluation with averaged test-time augmentation...')
     prds_tst = np.zeros(msks_tst.shape)
-    for name, aug, inv in INVERTIBLE_2D_BATCH_AUGMENTATIONS:
+    for name, aug, inv in INVERTIBLE_2D_AUGMENTATIONS:
         print('Augmentation: %s..' % name)
         assert np.all(imgs_tst == inv(aug(imgs_tst)))
         p = net.predict(aug(imgs_tst), batch_size=4, verbose=1)
-        prds_tst += crop(inv(p)) / len(INVERTIBLE_2D_BATCH_AUGMENTATIONS)
+        prds_tst += crop(inv(p)) / len(INVERTIBLE_2D_AUGMENTATIONS)
     evaluate_3DEM(msks_tst, prds_tst)
 
 

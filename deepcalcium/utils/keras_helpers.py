@@ -32,8 +32,59 @@ def F1(yt, yp):
 def jacc(yt, yp):
     """Keras Jaccard coefficient metric."""
     yp = K.round(yp)
-    union = K.sum(yt * yp)
-    return union / (K.sum(yt) + K.sum(yp) - union)
+    inter = K.sum(yt * yp)
+    union = K.sum(yt) + K.sum(yp) - inter
+    return inter / (union + 1e-7)
+
+
+def jacc_loss(yt, yp):
+    """Smooth Jaccard loss. Cannot round yp because that results in a
+    non-differentiable function."""
+    inter = K.sum(yt * yp)
+    union = K.sum(yt) + K.sum(yp) - inter
+    jsmooth = inter / (union + 1e-7)
+    return 1 - jsmooth
+
+
+def dice(yt, yp):
+    """Standard dice coefficient. The yp term in the denominator penalizes for false positives,
+    which is not the case in the Jaccard. Dice and F1 are equivalent, worked out nicely here:
+    https://brenocon.com/blog/2012/04/f-scores-dice-and-jaccard-set-similarity/."""
+    yp = K.round(yp)
+    inter = K.sum(yt * yp)
+    return (2. * inter) / (K.sum(yt) + K.sum(yp) + 1e-7)
+
+
+def dice_loss(yt, yp):
+    """Approximate dice coefficient loss function. Cannot round yp because 
+    that results in a non-differentiable function."""
+    inter = K.sum(yt * yp)
+    dsmooth = (2. * inter) / (K.sum(yt) + K.sum(yp) + 1e-7)
+    return 1 - dsmooth
+
+
+def dicesq(yt, yp):
+    """Squared dice-coefficient metric. From https://arxiv.org/abs/1606.04797."""
+    yp = K.round(yp)
+    nmr = 2 * K.sum(yt * yp)
+    dnm = K.sum(yt**2) + K.sum(yp**2) + K.epsilon()
+    return (nmr / dnm)
+
+
+def dicesq_loss(yt, yp):
+    return -1 * dicesq(yt, yp)
+
+
+def posyt(yt, yp):
+    """Proportion of positives in the ground-truth mask."""
+    size = K.sum(K.ones_like(yt))
+    return K.sum(yt) / (size + K.epsilon())
+
+
+def posyp(yt, yp):
+    """Proportion of positives in the predicted mask."""
+    size = K.sum(K.ones_like(yp))
+    return K.sum(K.round(yp)) / (size + K.epsilon())
 
 
 def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):
