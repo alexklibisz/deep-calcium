@@ -28,16 +28,13 @@ CUDA_VISIBLE_DEVICES="0" python examples/unet2ds_nf.py train neurofinder.00.00
 
 ## Models: Neuron Segmentation
 
-### UNet2DS: UNet with 2D Summary Images
+**UNet2DS: [U-Net](https://arxiv.org/abs/1505.04597) with 2D Summary Images**
 
-- Trained on Neurofinder labeled datasets with no problem-specific pre- or post-processing.
-- Implemented with Keras using Tensorflow backend.
-- Latest implementation for the Neurofinder competition scored **0.5356 without test-time augmentation** and **0.5422 with test-time augmentation.**
-  - Commits: [0bda9d4](https://github.com/alexklibisz/deep-calcium/commit/0bda9d4b9cad71fb3685671c2e699c88d9195a24), [f1b33bf](https://github.com/alexklibisz/deep-calcium/commit/f1b33bfe48425d0d7a33f7f74ded19905a24b88f)
-  - Submission md5sum d9b47b2c42e4f04cfd76b308b79680a6 (0.5356), 708add7dbd42455d99bb5eb3fe515e49 (0.5422).
-  - [Training, submission artifacts on Dropbox.](https://www.dropbox.com/sh/tqbclt7muuvqfw4/AADET6ZVlUbHZsqHKgwDOysXa?dl=0)
-  - [Pre-trained weights `weights_val_nf_f1_mean.hdf5`](https://www.dropbox.com/sh/tqbclt7muuvqfw4/AACqVVA8oJlZNIYvfc6x6gO2a/weights_val_nf_f1_mean.hdf5?dl=1), md5sum ffaa4c3a5110eae024114d3fbdd438f2.
-  - [Pre-trained model architecture with weights `model_val_nf_f1_mean.hdf5`](https://www.dropbox.com/s/x5bv4klz16ai6wa/model_val_nf_f1_mean.hdf5?dl=1), md5sum a31ecbb96e28a138b4974b19e90033f4. This can more easily be loaded using Keras `load_model` function.
+- Trained on data from the [Neurofinder challenge](http://neurofinder.codeneuro.org/) with the following results.
 
-![UNet2DS 0.5422 scores](media/nf_scores_unet2ds-tta_0.5422.png)
-![UNet2DS 0.5355 scores](media/nf_scores_unet2ds_0.5356.png)
+| Date | Summary | Mean F<sub>1</sub> Score | All Scores | Model & Weights | Training Artifacts |
+|---|---|---|---|---|---|
+|6/16/17|UNet with a single batchnorm layer at the input. Images scaled to [0,1]. |0.5356|[Image](https://github.com/alexklibisz/deep-calcium/blob/dev/media/nf_scores_unet2ds_0.5356.png)|[Dropbox](https://www.dropbox.com/sh/tqbclt7muuvqfw4/AACqVVA8oJlZNIYvfc6x6gO2a/weights_val_nf_f1_mean.hdf5?dl=1)|[Dropbox](https://www.dropbox.com/sh/tqbclt7muuvqfw4/AADET6ZVlUbHZsqHKgwDOysXa?dl=0)|
+|7/12/17|Same as 6/16/17, but with 8x test-time augmentation. |0.5422|[Image](https://github.com/alexklibisz/deep-calcium/blob/dev/media/nf_scores_unet2ds-tta_0.5422.png)|[Dropbox](https://www.dropbox.com/s/x5bv4klz16ai6wa/model_val_nf_f1_mean.hdf5?dl=1)|[Dropbox](https://www.dropbox.com/sh/tqbclt7muuvqfw4/AADET6ZVlUbHZsqHKgwDOysXa?dl=0)|
+|7/13/17|UNet with batchnorm between each conv and ReLU. Mean subtraction and normalization on each summary image. Mask-summary erosion to eliminate merged neurons in ground-truth mask.|0.5611|TODO|TODO|TODO|
+|7/13/17|Same as 7/13/17, but with 8x test-time augmentation.|0.5689|TODO|TODO|TODO|
