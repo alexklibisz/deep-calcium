@@ -8,6 +8,18 @@ import numpy as np
 import pandas as pd
 
 
+def weighted_binary_crossentropy(yt, yp, wfp=1., wfn=5.):
+
+    # Standard log loss.
+    loss = -1 * (yt * K.log(yp + 1e-7) + (1 - yt) * K.log(1 - yp + 1e-7))
+
+    # Compute weight matrix, scaled by the error at each pixel.
+    fpmat = (1 - yt) * wfp
+    fnmat = yt * wfn
+    wmat = fnmat + fpmat
+    return K.mean(loss * wmat)
+
+
 def prec(yt, yp):
     """Keras precision metric."""
     yp = K.round(yp)
@@ -65,7 +77,6 @@ def dice_loss(yt, yp):
 
 def dicesq(yt, yp):
     """Squared dice-coefficient metric. From https://arxiv.org/abs/1606.04797."""
-    yp = K.round(yp)
     nmr = 2 * K.sum(yt * yp)
     dnm = K.sum(yt**2) + K.sum(yp**2) + K.epsilon()
     return (nmr / dnm)
@@ -91,16 +102,18 @@ def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):
     """Given a model_path, configures the model to have a new input shape, then
     loads the model using keras' load_model with the given load_model_args."""
 
-    from keras.models import load_model
-    from json import loads, dumps
+    from keras.models import load_model, model_from_json
+    from json import loads, dumps, dump
     from hashlib import md5
     from shutil import copy
     from os import path, remove
     from time import time
     import h5py
 
-    if input_shape[0]:
-        input_shape = (None,) + input_shape
+    def replace_shape(old_shape):
+        old_val = np.max(old_shape)
+        new_val = np.max(input_shape)
+        return [x if x != old_val else new_val for x in old_shape]
 
     # Make a copy of the model hdf5 file.
     path = '.tmp_%s_%d' % (path.basename(model_path), int(time()))
@@ -109,8 +122,15 @@ def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):
     # Open the copied hdf5 file and modify the input layer's shape.
     h5 = h5py.File(path, 'a')
     config = loads(h5.attrs['model_config'])
-    config['config']['layers'][0]['batch_input_shape'] = list(input_shape)
-    config['config']['layers'][0]['config']['batch_input_shape'] = list(input_shape)
+
+    for layer in config['config']['layers']:
+
+        if 'batch_input_shape' in layer['config'] and layer['config']['batch_input_shape']:
+            layer['config']['batch_input_shape'] = replace_shape(layer['config']['batch_input_shape'])
+
+        if 'output_shape' in layer['config'] and layer['config']['output_shape']:
+            layer['config']['output_shape'] = replace_shape(layer['config']['output_shape'])
+
     h5.attrs['model_config'] = dumps(config)
     h5.close()
 

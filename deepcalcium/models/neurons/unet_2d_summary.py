@@ -8,7 +8,6 @@ from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, EarlyStopping, CSVLogger, ReduceLROnPlateau
 from keras.optimizers import Adam
 from keras.losses import binary_crossentropy
-from keras_contrib.callbacks import DeadReluDetector
 from math import ceil
 from os import path, mkdir, remove
 from scipy.misc import imsave
@@ -19,28 +18,29 @@ import json
 import keras.backend as K
 import logging
 import numpy as np
+import os
+import pickle
 import tensorflow as tf
 import sys
 
 from deepcalcium.utils.runtime import funcname
 from deepcalcium.datasets.nf import nf_mask_metrics
-from deepcalcium.utils.keras_helpers import MetricsPlotCallback, F1, prec, reca, dice, dicesq, dice_loss, dicesq_loss, posyt, posyp, load_model_with_new_input_shape
+from deepcalcium.utils.keras_helpers import MetricsPlotCallback, F1, prec, reca, dice, dicesq, dice_loss, dicesq_loss, posyt, posyp, load_model_with_new_input_shape, weighted_binary_crossentropy
 from deepcalcium.utils.visuals import mask_outlines
 from deepcalcium.utils.data_utils import INVERTIBLE_2D_AUGMENTATIONS
 
 
 class ValidationMetricsCB(Callback):
 
-    def __init__(self, model_val, S_summ, M_summ, names, y_coords, cpdir):
+    def __init__(self, model_val, S_summ, M_summ, names, y_coords, scores_path):
         self.model_val = model_val
         self.S_summ = []
         self.M_summ = []
         self.val_coords = []
         self.names = []
-        self.cpdir = cpdir
+        self.scores_path = scores_path
 
-        # Store standard, flipped, rotated summary images and their corresponding
-        # validation masks.
+        # Standard, flipped, rotated summary images and corresponding validation masks.
         for s, m, name, (y0, y1) in zip(S_summ, M_summ, names, y_coords):
 
             vm = np.zeros(s.shape, dtype=np.uint8)
@@ -62,6 +62,8 @@ class ValidationMetricsCB(Callback):
 
     def on_epoch_end(self, epoch, logs={}):
 
+        # import pdb; pdb.set_trace()
+
         logger = logging.getLogger(funcname())
         logger.info('\n')
         tic = time()
@@ -69,14 +71,9 @@ class ValidationMetricsCB(Callback):
         # Transfer weights from the training model to the validation model.
         self.model_val.set_weights(self.model.get_weights())
 
-        # # Save weights from the training model and load them into validation model.
-        # path_weights = '%s/weights.tmp' % self.cpdir
-        # self.model.save_weights(path_weights)
-        # self.model_val.load_weights(path_weights)
-        # remove(path_weights)
-
         # Tracking precision, recall, f1 values.
         pp, rr, ff = [], [], []
+        name_to_f1 = {n: [] for n in self.names}
 
         # Padding helper.
         _, hw, ww = self.model_val.input_shape
@@ -88,17 +85,21 @@ class ValidationMetricsCB(Callback):
             y0, y1, x0, x1 = vc
 
             # Batch prediction with padding.
-            batch = np.zeros((1,) + self.model_val.input_shape[1:])
-            batch[0] = pad(s)
-            mp = self.model_val.predict(batch)[0, :s.shape[0], :s.shape[1]]
+            [mp] = self.model_val.predict(pad(s)[np.newaxis, :, :])
 
             # Evaluate metrics masks within validation area.
             p, r, i, e, f = nf_mask_metrics(m[y0:y1, x0:x1], mp[y0:y1, x0:x1].round())
             pp.append(p)
             rr.append(r)
             ff.append(f)
+            name_to_f1[name].append(f)
 
             logger.info('%s p=%.3lf r=%.3lf f=%.3lf' % (name, p, r, f))
+
+        if self.scores_path:
+            fp = open(self.scores_path, 'wb')
+            pickle.dump(name_to_f1, fp)
+            fp.close()
 
         # Compute validation score with added epsilon for early epochs.
         eps = 1e-4 * epoch if epoch else 0
@@ -116,11 +117,11 @@ class ValidationMetricsCB(Callback):
         logger.info('minimum f1      = %.3lf' % logs['val_nf_f1_min'])
         logger.info('median f1       = %.3lf' % logs['val_nf_f1_median'])
         logger.info('adjusted f1     = %.3lf' % logs['val_nf_f1_adj'])
-        logger.info('validation time = %.3lf' % (time() - tic))
+        logger.info('validation time = %.3lf seconds' % (time() - tic))
 
 
 def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='he_normal',
-                 conv_l2_lambda=0.0, prop_dropout_base=0.25, upsampling_or_transpose='transpose'):
+                 prop_dropout_base=0.25, upsampling_or_transpose='transpose'):
     """Builds and returns the UNet architecture using Keras.
 
     Arguments:
@@ -130,7 +131,6 @@ def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='
             divided by two four times to the output layer.
         conv_kernel_init: weight initialization for the convolutional kernels. He initialization
             is considered best-practice when using ReLU activations, as is the case in this network.
-        conv_l2_lambda: lambda term for l2 regularization at each convolutional kernel.
         prop_dropout_base: proportion of dropout after the first pooling layer. Two-times the
             proportion is used after subsequent pooling layers on the downward pass.
         upsampling_or_transpose: whether to use Upsampling2D or Conv2DTranspose layers on the upward
@@ -145,20 +145,25 @@ def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='
     drp = prop_dropout_base
     nfb = nb_filters_base
     cki = conv_kernel_init
-    cl2 = l2(conv_l2_lambda)
+
+    # Theano vs. TF setup.
+    assert K.backend() == 'tensorflow', 'Theano implementation is incomplete.'
 
     def up_layer(nb_filters, x):
         if upsampling_or_transpose == 'transpose':
-            return Conv2DTranspose(nb_filters, 2, strides=2, activation='relu', kernel_initializer=cki, kernel_regularizer=cl2)(x)
+            x = Conv2DTranspose(nb_filters, 2, strides=2, kernel_initializer=cki)(x)
+            x = BatchNormalization(momentum=0.5)(x)
+            return Activation('relu')(x)
         else:
             return UpSampling2D()(x)
 
     def conv_layer(nb_filters, x):
-        return Conv2D(nb_filters, 3, padding='same', activation='relu', kernel_initializer=cki, kernel_regularizer=cl2)(x)
+        x = Conv2D(nb_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=cki)(x)
+        x = BatchNormalization(axis=-1)(x)
+        return Activation('relu')(x)
 
     x = inputs = Input(window_shape)
-    x = Lambda(lambda x: K.expand_dims(x))(x)
-    x = BatchNormalization(axis=-1)(x)
+    x = Lambda(lambda x: K.expand_dims(x, axis=-1))(x)
 
     x = conv_layer(nfb, x)
     x = conv_layer(nfb, x)
@@ -188,29 +193,28 @@ def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='
     x = up_layer(nfb * 8, x)
     x = Dropout(drp * 2)(x)
 
-    x = concatenate([x, dc_3_out], axis=3)
+    x = concatenate([x, dc_3_out], axis=-1)
     x = conv_layer(nfb * 8, x)
     x = conv_layer(nfb * 8, x)
     x = up_layer(nfb * 4, x)
     x = Dropout(drp * 2)(x)
 
-    x = concatenate([x, dc_2_out], axis=3)
+    x = concatenate([x, dc_2_out], axis=-1)
     x = conv_layer(nfb * 4, x)
     x = conv_layer(nfb * 4, x)
     x = up_layer(nfb * 2, x)
     x = Dropout(drp * 2)(x)
 
-    x = concatenate([x, dc_1_out], axis=3)
+    x = concatenate([x, dc_1_out], axis=-1)
     x = conv_layer(nfb * 2, x)
     x = conv_layer(nfb * 2, x)
     x = up_layer(nfb, x)
     x = Dropout(drp)(x)
 
-    x = concatenate([x, dc_0_out], axis=3)
+    x = concatenate([x, dc_0_out], axis=-1)
     x = conv_layer(nfb, x)
     x = conv_layer(nfb, x)
-    x = Conv2D(2, 1)(x)
-    x = Activation('softmax')(x)
+    x = Conv2D(2, 1, activation='softmax')(x)
     x = Lambda(lambda x: x[:, :, :, -1])(x)
 
     return Model(inputs=inputs, outputs=x)
@@ -218,15 +222,50 @@ def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='
 
 def _summarize_series(ds):
     assert 'series/mean' in ds
-    summ = ds.get('series/mean')[...] * 1. / 2**16
-    assert np.min(summ) >= 0
-    assert np.max(summ) <= 1
+    # summ = ds.get('series/mean')[...] * 1. / 2**16
+    # return summ
+    summ = ds.get('series/mean')[...].astype(np.float32)
+    summ = (summ - np.mean(summ)) / np.std(summ)
     return summ
 
 
 def _summarize_mask(ds):
-    assert 'masks/max' in ds
-    return ds.get('masks/max')[...]
+    assert 'masks/raw' in ds
+
+    # Raw stack of masks.
+    msks = ds.get('masks/raw')[...]
+
+    # Coordinates of all 1s in the stack of masks.
+    zyx = list(zip(*np.where(msks == 1)))
+
+    # Mapping (y,x) -> z.
+    yx_z = {(y, x): [] for z, y, x in zyx}
+    for z, y, x in zyx:
+        yx_z[(y, x)].append(z)
+
+    # Remove all elements with > 1 z.
+    for k in list(yx_z.keys()):
+        if len(yx_z[k]) > 1:
+            del yx_z[k]
+    assert np.max([len(v) for v in yx_z.values()]) == 1.
+
+    # For (y,x), take the union of its z-values with its immediate neighbors' z-values.
+    for y, x in list(yx_z.keys()):
+        nbrs = [(y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1), (y + 1, x + 1),
+                (y - 1, x - 1), (y + 1, x - 1), (y - 1, x + 1)] + [(y, x)]
+        nbrs = [k for k in nbrs if k in yx_z]
+        allz = [yx_z[k][0] for k in nbrs]
+        if len(np.unique(allz)) > 1:
+            for k in nbrs:
+                del yx_z[k]
+
+    # The mask consists of the remaining (y,x) keys.
+    yy = [y for y, x in yx_z.keys()]
+    xx = [x for y, x in yx_z.keys()]
+    summ = np.zeros(msks.shape[1:])
+    summ[yy, xx] = 1.
+
+    return summ
 
 
 class UNet2DSummary(object):
@@ -248,7 +287,7 @@ class UNet2DSummary(object):
 
     def fit(self, datasets, model_path=None, proceed=False, shape_trn=(96, 96), shape_val=(512, 512), batch_size_trn=32,
             batch_size_val=1, nb_steps_trn=200, nb_epochs=20, prop_trn=0.75, prop_val=0.25, keras_callbacks=[],
-            optimizer=Adam(0.002), loss=binary_crossentropy):
+            optimizer=Adam(0.002), loss='binary_crossentropy'):
         """Constructs network based on parameters and trains with the given data.
 
         # Arguments
@@ -271,6 +310,7 @@ class UNet2DSummary(object):
 
         # Returns
             history: the Keras training history as a dictionary of metrics and their values after each epoch.
+            model_path: path to the HDF5 file where the best architecture and weights were serialized.
 
         """
 
@@ -283,12 +323,15 @@ class UNet2DSummary(object):
         assert 0 < prop_val < 1
         assert not (proceed and not model_path)
 
+        # Setup loss function.
         losses = {
             'binary_crossentropy': binary_crossentropy,
+            'weighted_binary_crossentropy': weighted_binary_crossentropy,
             'dice_loss': dice_loss,
             'dicesq_loss': dicesq_loss
         }
-        assert loss in losses.keys() or loss in losses.values()
+        assert loss in losses.keys() or loss.__name__ in \
+            [f.__name__ for f in losses.values()]
         loss = losses[loss] if type(loss) == str else loss
 
         # Load network from disk.
@@ -305,6 +348,7 @@ class UNet2DSummary(object):
             model_val = self.net_builder(shape_val)
             model.summary()
 
+        # Recompile network if proceed is false.
         if not proceed:
             model.compile(optimizer=optimizer, loss=loss,
                           metrics=[F1, prec, reca, dice, dicesq, posyt, posyp])
@@ -313,38 +357,42 @@ class UNet2DSummary(object):
         S_summ = [self.series_summary_func(ds) for ds in datasets]
         M_summ = [self.mask_summary_func(ds) for ds in datasets]
 
-        # Define generators for training and validation data.
-        yctrn = [(0, int(s.shape[0] * prop_trn)) for s in S_summ]
-        gen_trn = self.batch_gen(S_summ, M_summ, yctrn, batch_size_trn,
-                                 shape_trn, nb_max_augment=15)
-
-        # Validation setup.
+        # Min and max y-coordinates for training and validation sets.
         ycval = [(s.shape[0] - int(s.shape[0] * prop_val), s.shape[0]) for s in S_summ]
+        yctrn = [(0, int(s.shape[0] * prop_trn)) for s in S_summ]
+
+        # Names identifying each dataset.
         names = [ds.attrs['name'] for ds in datasets]
 
+        # Path where validation scores are saved to change sampling probabilities.
+        # scores_path = '%s/.scores_%d.pkl' % (self.cpdir, int(time()))
+        scores_path = None
+
+        # Training generator.
+        gen_trn = self.batch_gen(S_summ, M_summ, names, yctrn, batch_size_trn, nb_steps_trn,
+                                 shape_trn, 15, scores_path)
+
+        # Time to identify checkpoints.
+        tic = int(time())
+
         callbacks = [
-            ValidationMetricsCB(model_val, S_summ, M_summ, names, ycval, self.cpdir),
-            CSVLogger('%s/metrics.csv' % self.cpdir),
-            MetricsPlotCallback('%s/metrics.png' % self.cpdir,
-                                '%s/metrics.csv' % self.cpdir),
-            ModelCheckpoint('%s/model_val_nf_f1_mean.hdf5' % self.cpdir, mode='max',
+            ValidationMetricsCB(model_val, S_summ, M_summ, names, ycval, scores_path),
+            CSVLogger('%s/%d_metrics.csv' % (self.cpdir, tic)),
+            MetricsPlotCallback('%s/%d_metrics.png' % (self.cpdir, tic), '%s/%d_metrics.csv' % (self.cpdir, tic)),
+            ModelCheckpoint('%s/%d_model_{epoch:02d}_{val_nf_f1_mean:.3f}.hdf5' % (self.cpdir, tic), mode='max',
                             monitor='val_nf_f1_mean', save_best_only=True, verbose=1),
-            EarlyStopping(monitor='val_nf_f1_mean', min_delta=1e-3,
-                          patience=10, verbose=1, mode='max'),
-            EarlyStopping(monitor='reca', min_delta=1e-3,
-                          patience=4, verbose=1, mode='max'),
-            EarlyStopping(monitor='prec', min_delta=1e-3,
-                          patience=4, verbose=1, mode='max'),
-            DeadReluDetector(next(gen_trn)[0], True)
+            ReduceLROnPlateau(monitor='F1', factor=0.5, patience=5, min_lr=1e-4, mode='max'),
+
 
         ] + keras_callbacks
 
         trained = model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
-                                      callbacks=callbacks, verbose=1, max_q_size=100)
+                                      callbacks=callbacks, verbose=1, max_queue_size=1)
 
-        return trained.history
+        return trained.history, '%s/model_val_nf_f1_mean.hdf5' % self.cpdir
 
-    def batch_gen(self, S_summ, M_summ, y_coords, batch_size, window_shape, nb_max_augment=0):
+    def batch_gen(self, S_summ, M_summ, names, y_coords, batch_size, nb_steps, window_shape,
+                  nb_max_augment=0, scores_path=None):
         """Builds and yields batches of image windows and corresponding mask windows for training.
         Includes random data augmentation.
 
@@ -366,29 +414,16 @@ class UNet2DSummary(object):
         logger = logging.getLogger(funcname())
         rng = np.random
         hw, ww = window_shape
+        nb_yields = 0
 
         # Define augmentation functions to operate on the frame and mask.
-        def rot(a, b):
-            deg = rng.randint(1, 360)
-            a = transform.rotate(a, deg, mode='reflect', preserve_range=True)
-            b = transform.rotate(b, deg, mode='reflect', preserve_range=True)
-            return (a, b)
-
-        def stretch(a, b):
-            hw_, ww_ = rng.randint(hw, hw * 1.3), rng.randint(ww, ww * 1.3)
-            resize = lambda x: transform.resize(x, (hw_, ww_), preserve_range=True)
-            a, b = resize(a), resize(b)
-            y0 = rng.randint(0, a.shape[0] + 1 - hw)
-            x0 = rng.randint(0, a.shape[1] + 1 - ww)
-            y1, x1 = y0 + hw, x0 + ww
-            return a[y0:y1, x0:x1], b[y0:y1, x0:x1]
-
         augment_funcs = [
-            lambda a, b: (a, b),                      # Identity.
-            lambda a, b: (a[:, ::-1], b[:, ::-1]),    # Horizontal flip.
-            lambda a, b: (a[::-1, :], b[::-1, :]),    # Vertical flip.
-            lambda a, b: rot(a, b),                   # Free rotation.
-            lambda a, b: stretch(a, b),               # Make larger and crop.
+            lambda a, b: (a, b),                            # Identity.
+            lambda a, b: (a[:, ::-1], b[:, ::-1]),          # Horizontal flip.
+            lambda a, b: (a[::-1, :], b[::-1, :]),          # Vertical flip.
+            lambda a, b: (np.rot90(a, 1), np.rot90(b, 1)),  # 90 deg rotations.
+            lambda a, b: (np.rot90(a, 2), np.rot90(b, 2)),
+            lambda a, b: (np.rot90(a, 3), np.rot90(b, 3)),
         ]
 
         # Pre-compute neuron locations for faster sampling.
@@ -397,12 +432,20 @@ class UNet2DSummary(object):
             ymin, ymax = y_coords[ds_idx]
             neuron_locs.append(zip(*np.where(m[ymin:ymax, :] == 1)))
 
+        # Dataset indexes and default probability distribution for sampling them.
+        ds_idxs = np.arange(len(S_summ))
+        ds_idxp = np.ones((len(ds_idxs))) / len(ds_idxs)
+
         while True:
 
-            # Shuffle the dataset sampling order for each new batch.
-            ds_idxs = np.arange(len(S_summ))
-            rng.shuffle(ds_idxs)
-            ds_idxs = cycle(ds_idxs)
+            # Update sampling probabilities from scores file.
+            if scores_path and os.path.exists(scores_path) and (nb_yields - 1) % nb_steps == 0:
+                fp = open(scores_path, 'rb')
+                names_to_scores = pickle.load(fp)
+                fp.close()
+                ds_idxp = np.array([1 - np.mean(names_to_scores[n]) for n in names])
+                ds_idxp /= np.sum(ds_idxp)
+                print([(name, '%.4lf' % p) for name, p in zip(names, ds_idxp)])
 
             # Empty batches to fill.
             s_batch = np.zeros((batch_size, hw, ww), dtype=np.float32)
@@ -410,8 +453,8 @@ class UNet2DSummary(object):
 
             for b_idx in range(batch_size):
 
-                # Pick from next dataset.
-                ds_idx = next(ds_idxs)
+                # Sample next dataset.
+                ds_idx = rng.choice(np.arange(len(S_summ)), p=ds_idxp)
                 s, m = S_summ[ds_idx], M_summ[ds_idx]
 
                 # Dimensions. Height constrained by y range.
@@ -429,10 +472,6 @@ class UNet2DSummary(object):
                 x0 = max(0, int(cx - (ww / 2)))
                 x1 = min(x0 + ww, ws)
 
-                # Double check.
-                assert ymin <= y0 <= y1 <= ymax
-                assert 0 <= x0 <= x1 <= ws
-
                 # Slice and store the window.
                 m_batch[b_idx, :y1 - y0, :x1 - x0] = m[y0:y1, x0:x1]
                 s_batch[b_idx, :y1 - y0, :x1 - x0] = s[y0:y1, x0:x1]
@@ -442,6 +481,7 @@ class UNet2DSummary(object):
                 for aug in rng.choice(augment_funcs, nb_augment):
                     s_batch[b_idx], m_batch[b_idx] = aug(s_batch[b_idx], m_batch[b_idx])
 
+            nb_yields += 1
             yield s_batch, m_batch
 
     def predict(self, datasets, model_path, window_shape=(512, 512), print_scores=False, save=False, augmentation=False):
@@ -465,7 +505,7 @@ class UNet2DSummary(object):
                 Neurofinder submission from 0.5356 to 0.542.
 
         Returns:
-            Mp: list of the predicted masks stored as Numpy arrays.
+            Mp: list of the predicted masks stored as Numpy arrays containing raw activation values.
 
         """
 
@@ -493,25 +533,23 @@ class UNet2DSummary(object):
             hs, ws = s.shape
 
             # Pad and make prediction(s).
-            s_batch = np.zeros((1, ) + window_shape)
-            s_batch[0] = pad(s)
+            s_batch = pad(s)[np.newaxis, :, :]
 
             if augmentation:
-                mp = np.zeros_like(s)
-                for name, aug, inv in INVERTIBLE_2D_AUGMENTATIONS:
+                mp = np.zeros(s.shape)
+                for _, aug, inv in INVERTIBLE_2D_AUGMENTATIONS:
                     mpaug = model.predict(aug(s_batch))
                     mp += inv(mpaug)[0, :hs, :ws] / len(INVERTIBLE_2D_AUGMENTATIONS)
-                mp = mp.round()
 
             else:
-                mp = model.predict(s_batch)[0, :hs, :ws].round()
+                mp = model.predict(s_batch)[0, :hs, :ws]
 
             Mp.append(mp)
 
             # Track scores.
             if print_scores:
                 m = self.mask_summary_func(ds)
-                prec, reca, incl, excl, comb = nf_mask_metrics(m, mp)
+                prec, reca, incl, excl, comb = nf_mask_metrics(m, mp.round())
                 logger.info('%s: prec=%.3lf, reca=%.3lf, incl=%.3lf, excl=%.3lf, comb=%.3lf' % (
                     name, prec, reca, incl, excl, comb))
                 mean_prec += prec / len(datasets)
@@ -521,11 +559,11 @@ class UNet2DSummary(object):
             # Save mask and prediction.
             if save and 'masks' in ds:
                 m = self.mask_summary_func(ds)
-                outlined = mask_outlines(s, [m, mp], ['blue', 'red'])
+                outlined = mask_outlines(s, [m, mp.round()], ['blue', 'red'])
                 imsave('%s/%s_mp.png' % (self.cpdir, name), outlined)
 
             elif save:
-                outlined = mask_outlines(s, [mp], ['red'])
+                outlined = mask_outlines(s, [mp.round()], ['red'])
                 imsave('%s/%s_mp.png' % (self.cpdir, name), outlined)
 
         if print_scores:
