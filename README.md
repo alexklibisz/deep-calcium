@@ -4,7 +4,7 @@ Deep Learning Models for Calcium Imaging Data
 
 ## Example
 
-This will be streamlined in the future.
+This will be streamlined in the future (e.g. pip install).
 
 ```
 # Clone the repository.
