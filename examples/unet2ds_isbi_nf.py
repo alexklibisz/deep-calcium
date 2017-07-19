@@ -12,14 +12,9 @@
 # [0,65535] with 1000 < mean < 10000 depending on the dataset. So the Neurofinder
 # data in general is much darker. Maybe there is some pre-processing that could
 # account for this and improve the results.
-from keras.models import model_from_json, Model
-from keras.layers import Input, Lambda
 from keras.callbacks import ModelCheckpoint
 from keras.optimizers import Adam
-from time import time
-import argparse
 import logging
-import json
 import numpy as np
 import tensorflow as tf
 import keras.backend as K
@@ -29,7 +24,7 @@ import sys
 sys.path.append('.')
 
 from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary
-from deepcalcium.datasets.nf import nf_load_hdf5, nf_submit
+from deepcalcium.datasets.nf import nf_load_hdf5
 
 np.random.seed(865)
 tf.set_random_seed(7535)
@@ -87,7 +82,7 @@ def train_isbi():
     # Model, data, generators. Use the first 25 slices for training and the
     # last five for validation.
     model = UNet2DSummary(cpdir=CPDIR)
-    net = model.net_builder(window_shape)
+    net = model.net_builder_func(window_shape)
     imgs_trn = tif.imread('%s/isbi-train-volume.tif' % CPDIR)[:25, :, :] / 255.
     msks_trn = tif.imread('%s/isbi-train-labels.tif' % CPDIR)[:25, :, :] / 255.
     imgs_val = tif.imread('%s/isbi-train-volume.tif' % CPDIR)[25:, :, :] / 255.
@@ -129,8 +124,6 @@ def finetune_neurofinder(method='full'):
 
     # Load all sequences and masks as hdf5 File objects.
     ds_trn = nf_load_hdf5('all_train')
-    bad_names = ['neurofinder.04.00']
-    ds_trn = [ds for ds in ds_trn if ds.attrs['name'] not in bad_names]
 
     # Modify the network builder function to freeze all but the last four layers
     # and lower the learning rate.
@@ -143,7 +136,7 @@ def finetune_neurofinder(method='full'):
                 layer.trainable = False
             return net
 
-        model = UNet2DSummary(cpdir=CPDIR, net_builder=net_builder)
+        model = UNet2DSummary(cpdir=CPDIR, net_builder_func=net_builder)
 
     # Keep the default network.
     else:
@@ -152,7 +145,7 @@ def finetune_neurofinder(method='full'):
     # Training.
     model.fit(
         ds_trn,
-        weights_path=ISBI_WEIGHTS_PATH,
+        model_path=ISBI_WEIGHTS_PATH,
         shape_trn=(128, 128),
         shape_val=(512, 512),
         batch_size_trn=20,
@@ -173,6 +166,6 @@ def cotrain():
 if __name__ == "__main__":
 
     # Un-comment the function you want to run.
-    train_isbi()
-    # finetune_neurofinder('full')
+    # train_isbi()
+    finetune_neurofinder('full')
     # finetune_neurofinder('softmax')

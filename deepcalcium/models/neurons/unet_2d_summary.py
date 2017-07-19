@@ -4,24 +4,18 @@
 # The code for building the UNet network can easily be extracted and re-used
 # independent of the specific calcium-imaging features.
 from __future__ import division, print_function
-from itertools import cycle
-from keras.callbacks import Callback, ModelCheckpoint, EarlyStopping, CSVLogger, ReduceLROnPlateau
+from keras.callbacks import Callback, ModelCheckpoint, CSVLogger, ReduceLROnPlateau
 from keras.optimizers import Adam
 from keras.losses import binary_crossentropy
-from math import ceil
-from os import path, mkdir, remove
+from os import path, mkdir
 from scipy.misc import imsave
-from skimage import transform
 from time import time
-from tqdm import tqdm
-import json
+import h5py
 import keras.backend as K
 import logging
 import numpy as np
 import os
 import pickle
-import tensorflow as tf
-import sys
 
 from deepcalcium.utils.runtime import funcname
 from deepcalcium.datasets.nf import nf_mask_metrics
@@ -30,9 +24,10 @@ from deepcalcium.utils.visuals import mask_outlines
 from deepcalcium.utils.data_utils import INVERTIBLE_2D_AUGMENTATIONS
 
 
-class ValidationMetricsCB(Callback):
+class _ValidationMetricsCB(Callback):
+    """Keras callback that evaluates validation metrics on full-size predictions during training."""
 
-    def __init__(self, model_val, S_summ, M_summ, names, y_coords, scores_path):
+    def __init__(self, model_val, S_summ, M_summ, names, y_coords, scores_path=None):
         self.model_val = model_val
         self.S_summ = []
         self.M_summ = []
@@ -61,8 +56,6 @@ class ValidationMetricsCB(Callback):
             append(lambda x: np.rot90(x, 3))
 
     def on_epoch_end(self, epoch, logs={}):
-
-        # import pdb; pdb.set_trace()
 
         logger = logging.getLogger(funcname())
         logger.info('\n')
@@ -124,7 +117,7 @@ def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='
                  prop_dropout_base=0.25, upsampling_or_transpose='transpose'):
     """Builds and returns the UNet architecture using Keras.
 
-    Arguments:
+    # Arguments
         window_shape: tuple of two equivalent integers defining the input/output window shape.
         nb_filters_base: number of convolutional filters used at the first layer. This is doubled
             after every pooling layer, four times until the bottleneck layer, and then it gets
@@ -136,11 +129,13 @@ def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='
         upsampling_or_transpose: whether to use Upsampling2D or Conv2DTranspose layers on the upward
             pass. The original paper used Conv2DTranspose ("Deconvolution").
 
+    # Returns
+        model: Keras model, not compiled.
+
     """
 
-    from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, Reshape, UpSampling2D, Activation
+    from keras.layers import Input, Conv2D, MaxPooling2D, Conv2DTranspose, Dropout, concatenate, BatchNormalization, Lambda, UpSampling2D, Activation
     from keras.models import Model
-    from keras.regularizers import l2
 
     drp = prop_dropout_base
     nfb = nb_filters_base
@@ -216,24 +211,43 @@ def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='
     x = conv_layer(nfb, x)
     x = Conv2D(2, 1, activation='softmax')(x)
     x = Lambda(lambda x: x[:, :, :, -1])(x)
+    model = Model(inputs=inputs, outputs=x)
+    return model
 
-    return Model(inputs=inputs, outputs=x)
 
+def _summarize_series(dspath):
+    """Default summary function for a series. Normalizes the mean summary using
+    its mean and standard deviation.
 
-def _summarize_series(ds):
-    assert 'series/mean' in ds
-    # summ = ds.get('series/mean')[...] * 1. / 2**16
-    # return summ
-    summ = ds.get('series/mean')[...].astype(np.float32)
+    # Arguments
+        dspath: Path to HDF5 dataset where the mask is stored.
+
+    # Returns
+        summ: (height x width) normalized mean summary.
+    """
+    fp = h5py.File(dspath)
+    summ = fp.get('series/mean')[...].astype(np.float32)
     summ = (summ - np.mean(summ)) / np.std(summ)
+    fp.close()
     return summ
 
 
-def _summarize_mask(ds):
-    assert 'masks/raw' in ds
+def _summarize_mask(dspath):
+    """Default summary function for a mask. Flattens the stack of neuron masks
+    into a (height x width) combined mask. Eliminates overlapping and neighboring
+    pixels that belong to different neurons to preserve the original number of
+    independent neurons.
 
-    # Raw stack of masks.
-    msks = ds.get('masks/raw')[...]
+    # Arguments
+        dspath: Path to HDF5 dataset where the mask is stored.
+
+    # Returns
+        summ: (height x width) mask summary. 
+    """
+
+    fp = h5py.File(dspath)
+    msks = fp.get('masks/raw')[...]
+    fp.close()
 
     # Coordinates of all 1s in the stack of masks.
     zyx = list(zip(*np.where(msks == 1)))
@@ -250,6 +264,7 @@ def _summarize_mask(ds):
     assert np.max([len(v) for v in yx_z.values()]) == 1.
 
     # For (y,x), take the union of its z-values with its immediate neighbors' z-values.
+    # Delete the (y,x) and its neighbors if |union| > 1.
     for y, x in list(yx_z.keys()):
         nbrs = [(y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1), (y + 1, x + 1),
                 (y - 1, x - 1), (y + 1, x - 1), (y - 1, x + 1)] + [(y, x)]
@@ -260,24 +275,44 @@ def _summarize_mask(ds):
                 del yx_z[k]
 
     # The mask consists of the remaining (y,x) keys.
-    yy = [y for y, x in yx_z.keys()]
-    xx = [x for y, x in yx_z.keys()]
+    yy, xx = [y for y, x in yx_z.keys()], [x for y, x in yx_z.keys()]
     summ = np.zeros(msks.shape[1:])
     summ[yy, xx] = 1.
 
     return summ
 
 
+def _name_dataset(dspath):
+    fp = h5py.File(dspath)
+    name = fp.attrs['name']
+    fp.close()
+    return name
+
+
 class UNet2DSummary(object):
+    """Wrapper class for the UNet2DS model. The constructor arguments are mainly functions that
+    make the model more composable. For example, you can easily evaluate a different kind of summary
+    by passing in a different series summary function.
+
+    # Arguments
+        cpdir: checkpoint directory where training artifacts and predictions will be stored.
+        dataset_name_func: function that returns a name for an HDF5 dataset given its path.
+        series_summary_func: function that returns a summary image for a series given the path to its HDF5 dataset. 
+        mask_summary_func: function that returns a summary image for a mask given the path to its HDF5 dataset
+        net_builder_func: function that builds and returns the Keras model used for training and predictions.
+            This allows swapping out the network architecture without having to re-write or copy all of the
+            training and prediction code.
+    """
 
     def __init__(self, cpdir='%s/.deep-calcium-datasets/tmp' % path.expanduser('~'),
-                 series_summary_func=_summarize_series,
-                 mask_summary_func=_summarize_mask, net_builder=unet_builder):
+                 dataset_name_func=_name_dataset, series_summary_func=_summarize_series,
+                 mask_summary_func=_summarize_mask, net_builder_func=unet_builder):
 
         self.cpdir = cpdir
-        self.net_builder = net_builder
+        self.dataset_name_func = dataset_name_func
         self.series_summary_func = series_summary_func
         self.mask_summary_func = mask_summary_func
+        self.net_builder_func = net_builder_func
 
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
@@ -285,15 +320,15 @@ class UNet2DSummary(object):
         cobj = [F1, prec, reca, dice, dicesq, posyt, posyp, dice_loss, dicesq_loss]
         self.custom_objects = {x.__name__: x for x in cobj}
 
-    def fit(self, datasets, model_path=None, proceed=False, shape_trn=(96, 96), shape_val=(512, 512), batch_size_trn=32,
-            batch_size_val=1, nb_steps_trn=200, nb_epochs=20, prop_trn=0.75, prop_val=0.25, keras_callbacks=[],
-            optimizer=Adam(0.002), loss='binary_crossentropy'):
+    def fit(self, dataset_paths, model_path=None, proceed=False, shape_trn=(96, 96), shape_val=(512, 512),
+            batch_size_trn=32, batch_size_val=1, nb_steps_trn=200, nb_epochs=20, prop_trn=0.75, prop_val=0.25,
+            keras_callbacks=[], optimizer=Adam(0.002), loss='binary_crossentropy'):
         """Constructs network based on parameters and trains with the given data.
 
         # Arguments
-            datasets: List of HDF5 datasets. Each of these will be passed to self.series_summary_func and 
-                self.mask_summary_func to compute its series and mask summaries, so the HDF5 structure 
-                should be compatible with those functions.
+            dataset_paths: Paths to HDF5 datasets. Each of these will be passed to self.series_summary_func and 
+                self.mask_summary_func to compute its series and mask summaries, so those functions should be
+                compatible with the HDF5 structure.
             model_path: filesystem path to serialized model that should be loaded into the network.
             proceed: whether to continue training where the model left off or start over. Only relevant when a 
                 model_path is given because it uses the saved optimizer state.
@@ -344,8 +379,8 @@ class UNet2DSummary(object):
 
         # Define, compile network.
         else:
-            model = self.net_builder(shape_trn)
-            model_val = self.net_builder(shape_val)
+            model = self.net_builder_func(shape_trn)
+            model_val = self.net_builder_func(shape_val)
             model.summary()
 
         # Recompile network if proceed is false.
@@ -353,37 +388,28 @@ class UNet2DSummary(object):
             model.compile(optimizer=optimizer, loss=loss,
                           metrics=[F1, prec, reca, dice, dicesq, posyt, posyp])
 
-        # Pre-compute summaries once to avoid problems with accessing HDF5.
-        S_summ = [self.series_summary_func(ds) for ds in datasets]
-        M_summ = [self.mask_summary_func(ds) for ds in datasets]
+        # Names and summaries.
+        names = [self.dataset_name_func(dsp) for dsp in dataset_paths]
+        S_summ = [self.series_summary_func(dsp) for dsp in dataset_paths]
+        M_summ = [self.mask_summary_func(dsp) for dsp in dataset_paths]
 
         # Min and max y-coordinates for training and validation sets.
         ycval = [(s.shape[0] - int(s.shape[0] * prop_val), s.shape[0]) for s in S_summ]
         yctrn = [(0, int(s.shape[0] * prop_trn)) for s in S_summ]
 
-        # Names identifying each dataset.
-        names = [ds.attrs['name'] for ds in datasets]
-
-        # Path where validation scores are saved to change sampling probabilities.
-        # scores_path = '%s/.scores_%d.pkl' % (self.cpdir, int(time()))
-        scores_path = None
-
         # Training generator.
-        gen_trn = self.batch_gen(S_summ, M_summ, names, yctrn, batch_size_trn, nb_steps_trn,
-                                 shape_trn, 15, scores_path)
+        gen_trn = self._batch_gen(S_summ, M_summ, names, yctrn, batch_size_trn, nb_steps_trn, shape_trn, 15)
 
-        # Time to identify checkpoints.
+        # Timestamp to identify checkpoints.
         tic = int(time())
 
         callbacks = [
-            ValidationMetricsCB(model_val, S_summ, M_summ, names, ycval, scores_path),
+            _ValidationMetricsCB(model_val, S_summ, M_summ, names, ycval),
             CSVLogger('%s/%d_metrics.csv' % (self.cpdir, tic)),
             MetricsPlotCallback('%s/%d_metrics.png' % (self.cpdir, tic), '%s/%d_metrics.csv' % (self.cpdir, tic)),
             ModelCheckpoint('%s/%d_model_{epoch:02d}_{val_nf_f1_mean:.3f}.hdf5' % (self.cpdir, tic), mode='max',
-                            monitor='val_nf_f1_mean', save_best_only=True, verbose=1),
+                            monitor='val_nf_f1_mean', save_best_only=False, verbose=1),
             ReduceLROnPlateau(monitor='F1', factor=0.5, patience=5, min_lr=1e-4, mode='max'),
-
-
         ] + keras_callbacks
 
         trained = model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
@@ -391,8 +417,8 @@ class UNet2DSummary(object):
 
         return trained.history, '%s/model_val_nf_f1_mean.hdf5' % self.cpdir
 
-    def batch_gen(self, S_summ, M_summ, names, y_coords, batch_size, nb_steps, window_shape,
-                  nb_max_augment=0, scores_path=None):
+    def _batch_gen(self, S_summ, M_summ, names, y_coords, batch_size, nb_steps, window_shape,
+                   nb_max_augment=0, scores_path=None):
         """Builds and yields batches of image windows and corresponding mask windows for training.
         Includes random data augmentation.
 
@@ -411,7 +437,6 @@ class UNet2DSummary(object):
 
         """
 
-        logger = logging.getLogger(funcname())
         rng = np.random
         hw, ww = window_shape
         nb_yields = 0
@@ -484,11 +509,12 @@ class UNet2DSummary(object):
             nb_yields += 1
             yield s_batch, m_batch
 
-    def predict(self, datasets, model_path, window_shape=(512, 512), print_scores=False, save=False, augmentation=False):
-        """Make predictions on the given datasets. Currently uses batches of 1.
+    def predict(self, dataset_paths, model_path, window_shape=(512, 512), print_scores=False,
+                save=False, augmentation=False):
+        """Make predictions on the given dataset_paths. Currently uses batches of 1.
 
         Arguments:
-            datasets: List of HDF5 datasets. Each of these will be passed to self.series_summary_func and 
+            dataset_paths: List of paths to HDF5 datasets. Each of these will be passed to self.series_summary_func and 
                 self.mask_summary_func to compute its series and mask summaries, so the HDF5 structure 
                 should be compatible with those functions.
             model_path: Path to the serialized Keras model HDF5 file. This file should include both the
@@ -506,6 +532,7 @@ class UNet2DSummary(object):
 
         Returns:
             Mp: list of the predicted masks stored as Numpy arrays containing raw activation values.
+            names: list of the dataset names, useful for making neurofinder submissions.
 
         """
 
@@ -523,51 +550,51 @@ class UNet2DSummary(object):
             return np.pad(x, ((0, hw - x.shape[0]), (0, ww - x.shape[1])), mode='reflect')
 
         # Store predicted masks and scores.
-        Mp = []
+        Mp, names = [], []
         mean_prec, mean_reca, mean_comb = 0., 0., 0.
 
         # Evaluate each sequence, mask pair.
-        for ds in datasets:
-            name = ds.attrs['name']
-            s = self.series_summary_func(ds)
+        for dsp in dataset_paths:
+            name = self.dataset_name_func(dsp)
+            s = self.series_summary_func(dsp)
             hs, ws = s.shape
 
             # Pad and make prediction(s).
             s_batch = pad(s)[np.newaxis, :, :]
-
             if augmentation:
                 mp = np.zeros(s.shape)
                 for _, aug, inv in INVERTIBLE_2D_AUGMENTATIONS:
                     mpaug = model.predict(aug(s_batch))
                     mp += inv(mpaug)[0, :hs, :ws] / len(INVERTIBLE_2D_AUGMENTATIONS)
-
             else:
                 mp = model.predict(s_batch)[0, :hs, :ws]
 
             Mp.append(mp)
+            names.append(name)
 
             # Track scores.
             if print_scores:
-                m = self.mask_summary_func(ds)
+                m = self.mask_summary_func(dsp)
                 prec, reca, incl, excl, comb = nf_mask_metrics(m, mp.round())
                 logger.info('%s: prec=%.3lf, reca=%.3lf, incl=%.3lf, excl=%.3lf, comb=%.3lf' % (
                     name, prec, reca, incl, excl, comb))
-                mean_prec += prec / len(datasets)
-                mean_reca += reca / len(datasets)
-                mean_comb += comb / len(datasets)
+                mean_prec += prec / len(dataset_paths)
+                mean_reca += reca / len(dataset_paths)
+                mean_comb += comb / len(dataset_paths)
 
             # Save mask and prediction.
-            if save and 'masks' in ds:
-                m = self.mask_summary_func(ds)
-                outlined = mask_outlines(s, [m, mp.round()], ['blue', 'red'])
-                imsave('%s/%s_mp.png' % (self.cpdir, name), outlined)
-
-            elif save:
-                outlined = mask_outlines(s, [mp.round()], ['red'])
-                imsave('%s/%s_mp.png' % (self.cpdir, name), outlined)
+            if save:
+                if 'masks' in h5py.File(dsp):
+                    m = self.mask_summary_func(dsp)
+                    outlined = mask_outlines(s, [m, mp.round()], ['blue', 'red'])
+                else:
+                    outlined = mask_outlines(s, [mp.round()], ['red'])
+                save_path = '%s/%s_mp.png' % (self.cpdir, name)
+                imsave(save_path, outlined)
+                logger.info('Saved %s' % save_path)
 
         if print_scores:
             logger.info('Mean prec=%.3lf, reca=%.3lf, comb=%.3lf' %
                         (mean_prec, mean_reca, mean_comb))
 
-        return Mp
+        return Mp, names

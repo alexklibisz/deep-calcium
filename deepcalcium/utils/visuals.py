@@ -8,7 +8,17 @@ from deepcalcium.utils.runtime import funcname
 
 
 def dataset_to_mp4(s, m, mp4_path):
-    '''Converts the given series to an mp4 video. If the mask is given, adds an outline around each neuron.'''
+    """Converts the given series to an mp4 video. If the mask is given, adds an outline around each neuron.
+
+    # Arguments
+        s: imaging series as a (time x height x width) numpy array.
+        m: neuron masks as a (no. neurons x height x width) numpy array.
+        mp4_path: path where the mp4 file should be saved.
+
+    # Returns
+        Nothing
+
+    """
 
     logger = logging.getLogger(funcname())
     logger.info('Preparing video %s.' % mp4_path)
@@ -41,31 +51,40 @@ def dataset_to_mp4(s, m, mp4_path):
     logger.info('Saved video %s.' % mp4_path)
 
 
-def mask_outlines(image, mask_arrs=[], colors=[]):
-    '''Apply each of the given masks (numpy arrays) to the base image with the given colors.'''
+def mask_outlines(img, mask_arrs=[], colors=[]):
+    """Apply each of the given masks (numpy arrays) to the base img with the given colors.
+
+    # Arguments
+        img: base image as a (height x width) numpy array.
+        mask_arrs: list of masks as (height x width) numpy arrays that should be outlined.
+        colors: one color (e.g. 'red' or hex code) for each mask.
+
+    # Returns
+        img: The base image with outlines applied.
+
+    """
 
     assert len(mask_arrs) == len(colors), 'One color per mask.'
-    logger = logging.getLogger(funcname())
-    image = image.astype(np.float32)
+    img = img.astype(np.float32)
 
-    # Convert the image to RGB.
-    if len(image.shape) == 2:
-        image = gray2rgb(image)
+    # Clip outliners, scale the img to [0,1].
+    img = np.clip(img, 0, np.percentile(img, 99))
+    img = (img - np.min(img)) / (np.max(img) - np.min(img))
+    clr_intensity = 1
 
-    # Clip outliners, scale the image to [0,1].
-    image = np.clip(image, 0, np.percentile(image, 99))
-    image = (image - np.min(image)) / (np.max(image) - np.min(image))
+    # Convert the img to RGB.
+    if len(img.shape) == 2:
+        img = gray2rgb(img)
 
     # Convert each mask into a region, then take the outlined mask
-    # of that region and add it to the image.
+    # of that region and add it to the img.
     for m, c in zip(mask_arrs, colors):
         if np.sum(m) == 0:
-            logger.warn('Empty mask.')
             continue
         reg = one(list(zip(*np.where(m == 1))))
-        oln = reg.mask(dims=image.shape[:2], fill=None, stroke=c, background='black')
+        oln = reg.mask(dims=img.shape[:2], fill=None, stroke=c, background='black')
         oln /= np.max(oln)
         yy, xx, cc = np.where(oln != 0)
-        image[yy, xx, cc] = oln[yy, xx, cc]
+        img[yy, xx, cc] = oln[yy, xx, cc] * clr_intensity
 
-    return image
+    return img

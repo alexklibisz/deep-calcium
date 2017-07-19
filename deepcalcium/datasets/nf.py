@@ -2,7 +2,7 @@ from __future__ import division
 from glob import glob
 from hashlib import md5
 from neurofinder import centers, shapes
-from os import path, mkdir, remove, rename
+from os import path, mkdir, remove
 from scipy.misc import imread
 from skimage import measure
 from sys import getsizeof
@@ -17,7 +17,7 @@ import requests
 
 from deepcalcium.utils.runtime import funcname
 
-neurofinder_names = sorted([
+NEUROFINDER_NAMES = sorted([
     'neurofinder.00.00', 'neurofinder.00.01', 'neurofinder.00.02',
     'neurofinder.00.03', 'neurofinder.00.04', 'neurofinder.00.05',
     'neurofinder.00.06', 'neurofinder.00.07', 'neurofinder.00.08',
@@ -29,34 +29,47 @@ neurofinder_names = sorted([
     'neurofinder.02.01.test', 'neurofinder.03.00.test', 'neurofinder.04.00.test',
     'neurofinder.04.01.test'])
 
-name_to_URL = {name: 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/%s.zip' % name
-               for name in neurofinder_names}
+NAME_TO_URL = {name: 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofinder/%s.zip' % name
+               for name in NEUROFINDER_NAMES}
 
 
 def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expanduser('~')):
-    '''Downloads neurofinder datasets and pre-processes them into hdf5 files.'''
+    """Downloads neurofinder datasets and pre-processes them into HDF5 datasets.
+    Each HDF5 file will consist of the following datasets:
+    1. series/raw:  (no. images x height x width) array of the raw TIFF values.
+    2. series/mean: (height x width) mean summary of series/raw.
+    3. series/max:  (height x width) max summary of series/raw.
+    4. masks/raw: (no. neurons x height x width) array of the masks for every individual neuron.
+    5. masks/max: (height x width) max summary of the masks/raw.
+
+    # Arguments
+        names: single name (string) or list of names from the NEUROFINDER_NAMES list.
+        datasets_dir: directory where created datasets should be stored.
+
+    # Returns
+        dataset_paths: list of paths to the HDF5 dataset files that were created.
+    """
 
     logger = logging.getLogger(funcname())
 
     # Convert special names 'all', 'all_train', and 'all_test'.
     if type(names) == str and names.lower() == 'all':
-        names = neurofinder_names
+        dataset_names = NEUROFINDER_NAMES
     elif type(names) == str and names.lower() == 'all_train':
-        _ = [n for n in neurofinder_names if '.test' not in n]
-        names = sorted(_)
+        dataset_names = sorted([n for n in NEUROFINDER_NAMES if '.test' not in n])
     elif type(names) == str and names.lower() == 'all_test':
-        _ = [n for n in neurofinder_names if '.test' in n]
-        names = sorted(_)
+        dataset_names = sorted([n for n in NEUROFINDER_NAMES if '.test' in n])
     elif type(names) == str:
-        names = names.split(',')
-    assert type(names) == list
+        dataset_names = names.split(',')
+    else:
+        dataset_names = names
 
     if not path.exists(datasets_dir):
         mkdir(datasets_dir)
 
     # Download datasets, unzip them, delete zip files.
-    for name in names:
-        url = name_to_URL[name]
+    for name in dataset_names:
+        url = NAME_TO_URL[name]
         zip_name = '%s.zip' % name
         zip_path = '%s/%s' % (datasets_dir, zip_name)
         unzip_name = zip_name[:-4]
@@ -88,9 +101,8 @@ def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expandus
         return m
 
     # Read the sequences and masks and store them as hdf5 files. Return the hdf5 objects.
-    datasets = []
-    S, M = [], []
-    for name in names:
+    dataset_paths = []
+    for name in dataset_names:
 
         logger.info('Preparing hdf5 files for %s.' % name)
         ds_path = '%s/%s/dataset.hdf5' % (datasets_dir, name)
@@ -104,15 +116,15 @@ def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expandus
             s_paths = sorted(glob('%s/*.tiff' % (s_dir)))
             i_shape = imread(s_paths[0]).shape
             s_shape = (len(s_paths),) + i_shape
-            dset_s = dsf.create_dataset('series/raw', s_shape, dtype='int16')
-            dset_smean = dsf.create_dataset('series/mean', i_shape, dtype='float16')
-            dset_smax = dsf.create_dataset('series/max', i_shape, dtype='int16')
-            dset_smax[...] = np.zeros(i_shape)
+            ds_ = dsf.create_dataset('series/raw', s_shape, dtype='int16')
+            ds_mean = dsf.create_dataset('series/mean', i_shape, dtype='float16')
+            ds_max = dsf.create_dataset('series/max', i_shape, dtype='int16')
+            ds_max[...] = np.zeros(i_shape)
             for idx, p in tqdm(enumerate(s_paths)):
                 img = imread(p)
-                dset_s[idx, :, :] = img
-                dset_smean[...] += (img * 1. / len(s_paths))
-                dset_smax[...] = np.maximum(dset_smax[...], img)
+                ds_[idx, :, :] = img
+                ds_mean[...] += (img * 1. / len(s_paths))
+                ds_max[...] = np.maximum(ds_max[...], img)
 
             # Populate mask, max summary.
             if '.test' not in name:
@@ -120,53 +132,58 @@ def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expandus
                 regions = json.load(open(r))
                 i_shape = s_shape[1:]
                 m_shape = (len(regions),) + i_shape
-                dset_m = dsf.create_dataset('masks/raw', m_shape, dtype='int8')
-                dset_mmax = dsf.create_dataset('masks/max', i_shape, dtype='int8')
+                ds_raw = dsf.create_dataset('masks/raw', m_shape, dtype='int8')
+                ds_max = dsf.create_dataset('masks/max', i_shape, dtype='int8')
                 for idx, r in tqdm(enumerate(regions)):
                     msk = tomask(r['coordinates'], m_shape[1:])
-                    dset_m[idx, :, :] = msk
-                    dset_mmax[...] = np.maximum(dset_mmax[...], msk)
-                dset_mmax = np.max(dset_m, axis=0)
+                    ds_raw[idx, :, :] = msk
+                    ds_max[...] = np.maximum(ds_max[...], msk)
+                ds_max = np.max(ds_raw, axis=0)
 
-            dsf.flush()
             dsf.close()
 
-        dsf = h5py.File(ds_path, 'r')
-        datasets.append(dsf)
+        dataset_paths.append(ds_path)
 
-    return datasets
+    return dataset_paths
 
 
 def nf_mask_metrics(m, mp):
-    '''Computes precision, recall, inclusion, exclusion, and combined (F1) score for the given mask (m) and predicted mask (mp).
-    Note that this does assumes single 2D masks and does not aaccount for overlapping neurons.'''
+    """Computes precision, recall, inclusion, exclusion, and combined (F1) score for the given mask (m) and predicted mask (mp). Note that this does assumes single 2D masks and does not aaccount for overlapping neurons.
 
-    logger = logging.getLogger(funcname())
+    # Arguments
+        m: ground-truth (height x width) binary numpy mask.
+        mp: predicted (height x width) binary numpy mask.
 
-    def mask_to_regional(m):
-        '''Convert a mask to a regional many object so it can be measured
-        using the neurofinder library.'''
-        mlbl = measure.label(m)
-        coords = []
-        for lbl in range(1, np.max(mlbl) + 1):
-            yy, xx = np.where(mlbl == lbl)
-            coords.append([[y, x] for y, x in zip(yy, xx)])
-        return many(coords)
+    # Returns
+        p,r,i,e,f1: precision, recall, inclusion, exclusion, and F1 scores.
 
-    # Things can get buggy if the predicted mask is empty,
-    # so just return all zeros.
+    """
+    # Return all zeros if the predicted mask is empty.
     if np.sum(mp.round()) == 0:
         return 0., 0., 0., 0., 0.
 
-    m_reg = mask_to_regional(m)
-    mp_reg = mask_to_regional(mp)
-    r, p = centers(m_reg, mp_reg)
-    i, e = shapes(m_reg, mp_reg)
-    c = 2. * (r * p) / (r + p)
-    return (p, r, i, e, c)
+    # Convert masks to regional format and compute their metrics.
+    m = _mask_to_regional(m)
+    mp = _mask_to_regional(mp)
+    r, p = centers(m, mp)
+    i, e = shapes(m, mp)
+    f1 = 2. * (r * p) / (r + p)
+    return (p, r, i, e, f1)
 
 
 def nf_submit(Mp, names, json_path):
+    """Given masks and dataset names, create a Neurofinder submission according to the
+    format outlined on http://neurofinder.codeneuro.org/.
+
+    # Arguments
+        Mp: list of predicted (height x width) binary masks.
+        names: list of dataset names.
+        json_path: path where the JSON submission should be saved.
+
+    # Returns
+        Nothing
+
+    """
 
     logger = logging.getLogger(funcname())
 
@@ -199,3 +216,14 @@ def nf_submit(Mp, names, json_path):
     json.dump(submission, fp)
     fp.close()
     logger.info('Saved submission to %s.' % json_path)
+
+
+def _mask_to_regional(m):
+    """Convert a 2D numpy mask to a regional many object so it can be measured
+    using the neurofinder library."""
+    mlbl = measure.label(m)
+    coords = []
+    for lbl in range(1, np.max(mlbl) + 1):
+        yy, xx = np.where(mlbl == lbl)
+        coords.append([[y, x] for y, x in zip(yy, xx)])
+    return many(coords)

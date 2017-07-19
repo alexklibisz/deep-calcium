@@ -24,16 +24,11 @@
 # jacc     0.86410320
 # Training with the Jaccard loss results in a slightly worse Jaccard score (0.853),
 # but this could also be attributed to a non-optimal learning rate.
-from keras.models import load_model, Model
-from keras.layers import Input, Lambda
 from keras.callbacks import ModelCheckpoint, CSVLogger
 from keras.optimizers import Adam
-from time import time
 import argparse
-import logging
 import numpy as np
 import tensorflow as tf
-import keras.backend as K
 import tifffile as tif
 
 import sys
@@ -68,8 +63,8 @@ def batch_gen(imgs, msks, window_shape, batch_size, augment=False):
 
             # Window boundaries with a random offset and extra care to stay in bounds.
             iidx = rng.randint(0, imgs.shape[0])
-            ymin, ymax = 0, imgs[iidx].shape[0]
-            xmin, xmax = 0, imgs[iidx].shape[1]
+            ymax = imgs[iidx].shape[0]
+            xmax = imgs[iidx].shape[1]
             cidx = rng.randint(0, len(cell_locs[iidx]))
             cy, cx = cell_locs[iidx][cidx]
             cy = max((h / 2), min(cy, ymax - (h / 2)))
@@ -120,7 +115,7 @@ def train_3DEM(model_path, weights_path):
     # Define UNet Keras model.
     if model_path:
         cobj = {'F1': F1, 'prec': prec, 'reca': reca, 'jacc': jacc,
-                'dice': dice, 'dicesq': dicesq, 'tf': tf, 'jacc_loss': jacc_loss}
+                'dice': dice, 'dicesq': dicesq, 'tf': tf}
         net = load_model_with_new_input_shape(model_path, window_shape,
                                               custom_objects=cobj)
     else:
@@ -159,7 +154,6 @@ def evaluate_3DEM(yt, yp, metrics=[F1, prec, reca, jacc]):
 def predict_3DEM(model_path):
 
     cpdir = 'checkpoints/unet2d_3dem'
-    model_save_path = '%s/model_tst_jacc.hdf5' % cpdir
     path_imgs_trn = '%s/training.tif' % cpdir
     path_msks_trn = '%s/training_groundtruth.tif' % cpdir
     path_imgs_tst = '%s/testing.tif' % cpdir

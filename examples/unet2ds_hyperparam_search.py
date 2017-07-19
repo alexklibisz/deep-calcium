@@ -1,12 +1,12 @@
 # Random hyper-parameter search over multiple GPUs.
-# Hashtag deep learning. Run on a box with 4 titan cards.
+# Originally ran on a box with 4 titan cards.
 # Run with this command:
 # while true; do CUDA_VISIBLE_DEVICES="1" python
 # examples/unet2ds_hyperparam_search.py; sleep 1; done
+# Likely needs updating to the latest interface, but leaving it around as an example
+# of how this might be implemented.
 from keras.optimizers import Adam
-from shutil import rmtree
 from time import time, sleep
-import argparse
 import json
 import logging
 import numpy as np
@@ -18,7 +18,7 @@ sys.path.append('.')
 
 from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary, _build_compile_unet, _summarize_sequence
 from deepcalcium.datasets.nf import nf_load_hdf5, nf_submit
-from pprint import pprint, pformat
+from pprint import pprint
 
 logging.basicConfig(level=logging.INFO)
 

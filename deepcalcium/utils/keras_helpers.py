@@ -1,9 +1,7 @@
 from __future__ import division
 from keras.callbacks import Callback
 from math import ceil
-from time import sleep, ctime
 import keras.backend as K
-import logging
 import numpy as np
 import pandas as pd
 
@@ -102,9 +100,8 @@ def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):
     """Given a model_path, configures the model to have a new input shape, then
     loads the model using keras' load_model with the given load_model_args."""
 
-    from keras.models import load_model, model_from_json
-    from json import loads, dumps, dump
-    from hashlib import md5
+    from keras.models import load_model
+    from json import loads, dumps
     from shutil import copy
     from os import path, remove
     from time import time

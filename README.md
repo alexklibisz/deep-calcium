@@ -1,7 +1,8 @@
 # deep-calcium
+
 Deep Learning Models for Calcium Imaging Data
 
-## Setup and Example
+## Example
 
 This will be streamlined in the future.
 
@@ -9,7 +10,7 @@ This will be streamlined in the future.
 # Clone the repository.
 git clone https://github.com/alexklibisz/deep-calcium && cd deep-calcium
 
-# Setup a virtual environment (google "virtual env wrapper").
+# Setup a virtual environment (google "virtual env wrapper" and install it).
 mkvirtualenv deep-calcium
 
 # Install dependencies inside the virtual environment.
@@ -17,16 +18,16 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 # Make data and checkpoints directories.
-mkdir data
-mkdir checkpoints
+mkdir data checkpoints
 
 # Run one of the examples - training UNet2DS on neurofinder.00.00 dataset.
 # Open the script and read the code to understand what's happening.
+# Note the following will require ~3.1GB of disk space to store the data.
 CUDA_VISIBLE_DEVICES="0" python examples/unet2ds_nf.py train neurofinder.00.00
 
 ```
 
-## Models: Neuron Segmentation
+## Models for Neuron Segmentation
 
 **UNet2DS: [U-Net](https://arxiv.org/abs/1505.04597) with 2D Summary Images**
 
