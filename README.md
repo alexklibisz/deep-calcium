@@ -31,7 +31,7 @@ CUDA_VISIBLE_DEVICES="0" python examples/unet2ds_nf.py train neurofinder.00.00
 
 **UNet2DS: [U-Net](https://arxiv.org/abs/1505.04597) with 2D Summary Images**
 
-- Model described in the forthcoming workshop paper Fast, Simple Calcium Imaging Segmentation with Fully Convolutional Networks (link coming soon).
+- Model described in the paper: [Fast, Simple Calcium Imaging Segmentation with Fully Convolutional Networks](https://arxiv.org/abs/1707.06314) by Aleksander Klibisz, Derek Rose, Matthew Eicholtz, Jay Blundon, Stanislav Zakharenko.
 - See notebooks for [figures](https://github.com/alexklibisz/deep-calcium/blob/36bd9d1824b6a44c9eac3bb6ce8e25f913c6a6d5/notebooks/dlmia_workshop_figures.ipynb) and [supplementary material](https://github.com/alexklibisz/deep-calcium/blob/36bd9d1824b6a44c9eac3bb6ce8e25f913c6a6d5/notebooks/dlmia_workshop_supplementary.ipynb).
 - Trained on data from the [Neurofinder challenge](http://neurofinder.codeneuro.org/) with results below.
 
