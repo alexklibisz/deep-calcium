@@ -33,6 +33,7 @@ $ CUDA_VISIBLE_DEVICES="0" python unet2ds_nfdata.py evaluate neurofinder.00.00 -
 - Model described in the paper: [Fast, Simple Calcium Imaging Segmentation with Fully Convolutional Networks](https://arxiv.org/abs/1707.06314) by Aleksander Klibisz, Derek Rose, Matthew Eicholtz, Jay Blundon, Stanislav Zakharenko.
 - See notebooks for [figures](https://github.com/alexklibisz/deep-calcium/blob/36bd9d1824b6a44c9eac3bb6ce8e25f913c6a6d5/notebooks/dlmia_workshop_figures.ipynb) and [supplementary material](https://github.com/alexklibisz/deep-calcium/blob/36bd9d1824b6a44c9eac3bb6ce8e25f913c6a6d5/notebooks/dlmia_workshop_supplementary.ipynb).
 - Trained on data from the [Neurofinder challenge](http://neurofinder.codeneuro.org/) with results below.
+- Usage with new data: see [this example](https://github.com/alexklibisz/deep-calcium/blob/dev/examples/neurons/unet2ds_sjdata.py) to understand how to use a trained model with new data. The required HDF5 format is described [here](https://github.com/alexklibisz/deep-calcium/blob/36bd9d1824b6a44c9eac3bb6ce8e25f913c6a6d5/deepcalcium/datasets/nf.py#L37-L43).
 
 | Date | Summary | Mean F<sub>1</sub> Score | All Scores | Model & Weights | Training Artifacts | Commit |
 |---|---|---|---|---|---|---|
