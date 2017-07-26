@@ -108,8 +108,8 @@ def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):
     import h5py
 
     def replace_shape(old_shape):
-        old_val = np.max(old_shape)
-        new_val = np.max(input_shape)
+        old_val = max(old_shape)
+        new_val = max(input_shape)
         return [x if x != old_val else new_val for x in old_shape]
 
     # Make a copy of the model hdf5 file.
@@ -123,10 +123,12 @@ def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):
     for layer in config['config']['layers']:
 
         if 'batch_input_shape' in layer['config'] and layer['config']['batch_input_shape']:
-            layer['config']['batch_input_shape'] = replace_shape(layer['config']['batch_input_shape'])
+            layer['config']['batch_input_shape'] = replace_shape(
+                layer['config']['batch_input_shape'])
 
         if 'output_shape' in layer['config'] and layer['config']['output_shape']:
-            layer['config']['output_shape'] = replace_shape(layer['config']['output_shape'])
+            layer['config']['output_shape'] = replace_shape(
+                layer['config']['output_shape'])
 
     h5.attrs['model_config'] = dumps(config)
     h5.close()
@@ -171,7 +173,8 @@ class MetricsPlotCallback(Callback):
         # Make figure.
         nb_col = 5
         nb_row = int(ceil(len(logs) / nb_col))
-        fig, _ = plt.subplots(nb_row, nb_col, figsize=(min(nb_col * 3, 10), 3 * nb_row))
+        fig, _ = plt.subplots(nb_row, nb_col, figsize=(
+            min(nb_col * 3, 10), 3 * nb_row))
         iterkeys = iter(sorted(logs.keys()))
 
         for idx, ax in enumerate(fig.axes):

@@ -26,9 +26,8 @@ def dataset_to_mp4(s, m, mp4_path):
     s = s.astype(np.float32)
     s = (s - np.min(s)) / (np.max(s) - np.min(s)) * 255
 
-    # If mask is given make a color video with neuron centers marked.
+    # If mask is given make a color video with neurons outlined.
     if m is not None:
-
         video = np.zeros(s.shape + (3,), dtype=np.uint8)
         video[:, :, :, 0] = s
         video[:, :, :, 1] = s
@@ -44,10 +43,9 @@ def dataset_to_mp4(s, m, mp4_path):
         video[:, yy, xx, :] = [102, 255, 255]
 
     else:
-
         video = s.astype(np.uint8)
 
-    vwrite(mp4_path.encode('ascii'), video)
+    vwrite(mp4_path, video)
     logger.info('Saved video %s.' % mp4_path)
 
 
@@ -82,7 +80,8 @@ def mask_outlines(img, mask_arrs=[], colors=[]):
         if np.sum(m) == 0:
             continue
         reg = one(list(zip(*np.where(m == 1))))
-        oln = reg.mask(dims=img.shape[:2], fill=None, stroke=c, background='black')
+        oln = reg.mask(dims=img.shape[:2], fill=None,
+                       stroke=c, background='black')
         oln /= np.max(oln)
         yy, xx, cc = np.where(oln != 0)
         img[yy, xx, cc] = oln[yy, xx, cc] * clr_intensity
