@@ -99,7 +99,8 @@ def make_stjude_dataset(name, tiffglob, mat_path, dataset_path):
         assert np.sum(ds_raw[idx, :, :]) == (2 * bbox_radius)**2
 
     fp.close()
-    logger.info('Done. File is %.2lf GB on disk.' % (os.path.getsize(dataset_path) / 1024**3))
+    logger.info('Done. File is %.2lf GB on disk.' %
+                (os.path.getsize(dataset_path) / 1024**3))
     return dataset_path
 
 
@@ -123,7 +124,8 @@ if __name__ == "__main__":
 
     # CONFIG: parameters for converting each dataset. See the first item below for precise explanation.
     # These datasets are current as of 7/19/17.
-    base = '/data/stjude/Data/AuditoryCortex/'  # Common directory where all datasets were stored.
+    # Common directory where all datasets were stored.
+    base = '/data/stjude/Data/AuditoryCortex/'
     dataset_args = [
         (
             # 1. Unique name for the dataset.
@@ -178,7 +180,8 @@ if __name__ == "__main__":
     ]
 
     # Create hdf5 datasets from the raw TIFFs.
-    ds_paths = sorted([make_stjude_dataset(name, tg, rp, dsp) for name, tg, rp, dsp in dataset_args])
+    ds_paths = sorted([make_stjude_dataset(name, tg, rp, dsp)
+                       for name, tg, rp, dsp in dataset_args])
 
     # Download weights - or you can do it manually.
     model_path = '%s/weights.hdf5' % cpdir
@@ -189,7 +192,8 @@ if __name__ == "__main__":
 
     # Model setup and predictions.
     model = UNet2DSummary(cpdir=cpdir)
-    Mp, names = model.predict(ds_paths, model_path, window_shape=(512, 512), save=True)
+    Mp, names = model.predict(ds_paths, model_path,
+                              window_shape=(512, 512), save=True)
 
     # Print name, shape, path to saved image for each dataset.
     for name, mp, path in zip(names, Mp, sorted(glob('%s/*.png' % cpdir))):

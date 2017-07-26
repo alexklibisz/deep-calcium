@@ -36,7 +36,7 @@ def training(dataset_name, model_path, cpdir):
         nb_steps_trn=100,           # Training batches / epoch.
         nb_epochs=10,               # Epochs.
         keras_callbacks=[],         # Custom keras callbacks.
-        prop_trn=0.75,              # Proportion of height for training, validation.
+        prop_trn=0.75,              # Height % for training, validation.
         prop_val=0.25,
     )
 
@@ -75,7 +75,7 @@ def prediction(dataset_name, model_path, cpdir):
         # Returns predictions as list of numpy arrays.
         Mp, names = model.predict(
             ds_tst,                      # hdf5 sequences (no masks).
-            model_path=model_path,       # Pre-trained Keras architecture and weights.
+            model_path=model_path,       # Pre-trained model and weights.
             window_shape=(512, 512),     # Input/output windows to the network.
             save=False,
             augmentation=aug
@@ -85,9 +85,11 @@ def prediction(dataset_name, model_path, cpdir):
         Mp = [m.round() for m in Mp]
 
         # Make a submission from the predicted masks.
-        json_path = '%s/submission_%d%s.json' % (model.cpdir, tic, ('_TTA' if aug else ''))
+        json_path = '%s/submission_%d%s.json' % (
+            model.cpdir, tic, ('_TTA' if aug else ''))
         nf_submit(Mp, names, json_path)
-        json_path = '%s/submission_latest%s.json' % (model.cpdir, ('_TTA' if aug else ''))
+        json_path = '%s/submission_latest%s.json' % (
+            model.cpdir, ('_TTA' if aug else ''))
         nf_submit(Mp, names, json_path)
 
 if __name__ == "__main__":
@@ -102,21 +104,24 @@ if __name__ == "__main__":
     sp_trn.set_defaults(which='train')
     sp_trn.add_argument('dataset', help='dataset name', default='all_train')
     sp_trn.add_argument('-m', '--model', help='path to model')
-    sp_trn.add_argument('-c', '--cpdir', help='checkpoint directory', default=cpdir)
+    sp_trn.add_argument(
+        '-c', '--cpdir', help='checkpoint directory', default=cpdir)
 
     # Training cli.
     sp_eva = sp.add_parser('evaluate', help='CLI for training.')
     sp_eva.set_defaults(which='evaluate')
     sp_eva.add_argument('dataset', help='dataset name', default='all_train')
     sp_eva.add_argument('-m', '--model', help='path to model', required=True)
-    sp_eva.add_argument('-c', '--cpdir', help='checkpoint directory', default=cpdir)
+    sp_eva.add_argument(
+        '-c', '--cpdir', help='checkpoint directory', default=cpdir)
 
     # Prediction cli.
     sp_prd = sp.add_parser('predict', help='CLI for prediction.')
     sp_prd.set_defaults(which='predict')
     sp_prd.add_argument('dataset', help='dataset name', default='all')
     sp_prd.add_argument('-m', '--model', help='path to model', required=True)
-    sp_prd.add_argument('-c', '--cpdir', help='checkpoint directory', default=cpdir)
+    sp_prd.add_argument(
+        '-c', '--cpdir', help='checkpoint directory', default=cpdir)
 
     # Parse and run appropriate function.
     args = vars(ap.parse_args())
