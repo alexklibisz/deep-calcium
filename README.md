@@ -2,28 +2,27 @@
 
 Deep Learning Models for Calcium Imaging Data
 
-## Example
+## Installation and example
 
-This will be streamlined in the future (e.g. pip install).
+Install the package and make predictions on Neurofinder using a pre-trained UNet2DS model.
+
+*This assumes python2.7 and pip2. python3.4 compatibility will hopefully be available soon.*
 
 ```
-# Clone the repository.
-git clone https://github.com/alexklibisz/deep-calcium && cd deep-calcium
+# Install from Github repo.
+$ pip2 install --upgrade --user -I pip
+$ pip2 install --user git+https://github.com/alexklibisz/deep-calcium.git
 
-# Setup a virtual environment (google "virtual env wrapper" and install it).
-mkvirtualenv deep-calcium
+# Make a checkpoints directories to save outputs.
+mkdir checkpoints
 
-# Install dependencies inside the virtual environment.
-pip install --upgrade pip
-pip install -r requirements.txt
+# Download the model and weights.
+$ wget https://goo.gl/EjpijZ -O model.hdf5
 
-# Make data and checkpoints directories.
-mkdir data checkpoints
-
-# Run one of the examples - training UNet2DS on neurofinder.00.00 dataset.
-# Open the script and read the code to understand what's happening.
-# Note the following will require ~3.1GB of disk space to store the data.
-CUDA_VISIBLE_DEVICES="0" python examples/unet2ds_nf.py train neurofinder.00.00
+# Download the example script and evaluate predictions on the first training dataset.
+# This will download and preprocess the dataset to ~/.deep-calcium-datasets, requiring ~3.1GB of disk space.
+$ wget https://raw.githubusercontent.com/alexklibisz/deep-calcium/dev/examples/neurons/unet2ds_nfdata.py
+$ CUDA_VISIBLE_DEVICES="0" python unet2ds_nfdata.py evaluate neurofinder.00.00 --model model.hdf5
 
 ```
 
