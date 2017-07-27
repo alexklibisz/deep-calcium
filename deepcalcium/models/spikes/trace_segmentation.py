@@ -180,9 +180,13 @@ def maxpool1D(x, pool_size, pool_strides):
     return x[0, :, :, 0]
 
 
-def binary_crossentropy_maxpool(yt, yp, L=3, S=1):
-    """Applying max-pooling before computing binary crossentropy loss."""
-    return binary_crossentropy(maxpool1D(yt, L, S), maxpool1D(yp, L, S))
+def weighted_maxpool_binary_crossentropy(yt, yp, L=3, S=1, wp=2., wn=1.):
+    """Applying max-pooling before computing binary crossentropy loss.
+    Apply weights wp to ground-truth positives and wn to ground-truth negatives."""
+    yt, yp = maxpool1D(yt, L, S), maxpool1D(yp, L, S)
+    losspos = yt * K.log(yp + 1e-7)
+    lossneg = (1 - yt) * K.log(1 - yp + 1e-7)
+    return -1 * ((wp * losspos) + (wn * lossneg))
 
 
 def F2_maxpool(yt, yp, L=3, S=1):
@@ -259,7 +263,7 @@ class TraceSegmentation(object):
             steps_trn=200, steps_val=20,
             val_type='leave_one_out', val_index=-1, prop_trn=0.8, prop_val=0.2,
             nb_epochs=20, keras_callbacks=[],
-            optimizer=Adam(0.002), loss=binary_crossentropy_maxpool):
+            optimizer=Adam(0.002), loss=weighted_maxpool_binary_crossentropy):
         """Constructs model based on parameters and trains with the given data.
 
         # Arguments
@@ -372,10 +376,10 @@ class TraceSegmentation(object):
 
         # Summary of metrics.
         logger = logging.getLogger(funcname())
-        for k in sorted(trained.history.keys()):
+        for k in sorted(trained.history.keys(), key=lambda k: k.replace('val_', '')):
             v = trained.history[k]
-            logger.info('%-20s %10.4lf (%d) %10.4lf (%d)' %
-                        (k, v[-1], len(v), np.max(v), np.argmax(v)))
+            logger.info('%-20s %10.4lf (%d) %10.4lf (%d) %10.4lf (%d)' %
+                        (k, v[-1], len(v), np.min(v), np.argmin(v), np.max(v), np.argmax(v)))
 
         # Return history and best model path.
         return trained.history, '%s/model_val_nf_f1_mean.hdf5' % self.cpdir
