@@ -70,7 +70,9 @@ class _ValidationMetricsCB(Callback):
 
         # Padding helper.
         _, hw, ww = self.model_val.input_shape
-        pad = lambda x: np.pad(x, ((0, hw - x.shape[0]), (0, ww - x.shape[1])), 'reflect')
+
+        def pad(x): return np.pad(
+            x, ((0, hw - x.shape[0]), (0, ww - x.shape[1])), 'reflect')
 
         for s, m, vc, name in zip(self.S_summ, self.M_summ, self.val_coords, self.names):
 
@@ -81,7 +83,8 @@ class _ValidationMetricsCB(Callback):
             [mp] = self.model_val.predict(pad(s)[np.newaxis, :, :])
 
             # Evaluate metrics masks within validation area.
-            p, r, i, e, f = nf_mask_metrics(m[y0:y1, x0:x1], mp[y0:y1, x0:x1].round())
+            p, r, i, e, f = nf_mask_metrics(
+                m[y0:y1, x0:x1], mp[y0:y1, x0:x1].round())
             pp.append(p)
             rr.append(r)
             ff.append(f)
@@ -146,14 +149,16 @@ def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='
 
     def up_layer(nb_filters, x):
         if upsampling_or_transpose == 'transpose':
-            x = Conv2DTranspose(nb_filters, 2, strides=2, kernel_initializer=cki)(x)
+            x = Conv2DTranspose(nb_filters, 2, strides=2,
+                                kernel_initializer=cki)(x)
             x = BatchNormalization(momentum=0.5)(x)
             return Activation('relu')(x)
         else:
             return UpSampling2D()(x)
 
     def conv_layer(nb_filters, x):
-        x = Conv2D(nb_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=cki)(x)
+        x = Conv2D(nb_filters, (3, 3), strides=(1, 1),
+                   padding='same', kernel_initializer=cki)(x)
         x = BatchNormalization(axis=-1)(x)
         return Activation('relu')(x)
 
@@ -242,7 +247,7 @@ def _summarize_mask(dspath):
         dspath: Path to HDF5 dataset where the mask is stored.
 
     # Returns
-        summ: (height x width) mask summary. 
+        summ: (height x width) mask summary.
     """
 
     fp = h5py.File(dspath)
@@ -297,7 +302,7 @@ class UNet2DSummary(object):
     # Arguments
         cpdir: checkpoint directory where training artifacts and predictions will be stored.
         dataset_name_func: function that returns a name for an HDF5 dataset given its path.
-        series_summary_func: function that returns a summary image for a series given the path to its HDF5 dataset. 
+        series_summary_func: function that returns a summary image for a series given the path to its HDF5 dataset.
         mask_summary_func: function that returns a summary image for a mask given the path to its HDF5 dataset
         net_builder_func: function that builds and returns the Keras model used for training and predictions.
             This allows swapping out the network architecture without having to re-write or copy all of the
@@ -317,7 +322,8 @@ class UNet2DSummary(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-        cobj = [F1, prec, reca, dice, dicesq, posyt, posyp, dice_loss, dicesq_loss]
+        cobj = [F1, prec, reca, dice, dicesq,
+                posyt, posyp, dice_loss, dicesq_loss]
         self.custom_objects = {x.__name__: x for x in cobj}
 
     def fit(self, dataset_paths, model_path=None, proceed=False, shape_trn=(96, 96), shape_val=(512, 512),
@@ -326,11 +332,11 @@ class UNet2DSummary(object):
         """Constructs network based on parameters and trains with the given data.
 
         # Arguments
-            dataset_paths: Paths to HDF5 datasets. Each of these will be passed to self.series_summary_func and 
+            dataset_paths: Paths to HDF5 datasets. Each of these will be passed to self.series_summary_func and
                 self.mask_summary_func to compute its series and mask summaries, so those functions should be
                 compatible with the HDF5 structure.
             model_path: filesystem path to serialized model that should be loaded into the network.
-            proceed: whether to continue training where the model left off or start over. Only relevant when a 
+            proceed: whether to continue training where the model left off or start over. Only relevant when a
                 model_path is given because it uses the saved optimizer state.
             shape_trn: (height, width) shape of the windows cropped for training.
             shape_val: (height, width) shape of the windows used for validation.
@@ -394,11 +400,13 @@ class UNet2DSummary(object):
         M_summ = [self.mask_summary_func(dsp) for dsp in dataset_paths]
 
         # Min and max y-coordinates for training and validation sets.
-        ycval = [(s.shape[0] - int(s.shape[0] * prop_val), s.shape[0]) for s in S_summ]
+        ycval = [(s.shape[0] - int(s.shape[0] * prop_val), s.shape[0])
+                 for s in S_summ]
         yctrn = [(0, int(s.shape[0] * prop_trn)) for s in S_summ]
 
         # Training generator.
-        gen_trn = self._batch_gen(S_summ, M_summ, names, yctrn, batch_size_trn, nb_steps_trn, shape_trn, 15)
+        gen_trn = self._batch_gen(
+            S_summ, M_summ, names, yctrn, batch_size_trn, nb_steps_trn, shape_trn, 15)
 
         # Timestamp to identify checkpoints.
         tic = int(time())
@@ -406,10 +414,12 @@ class UNet2DSummary(object):
         callbacks = [
             _ValidationMetricsCB(model_val, S_summ, M_summ, names, ycval),
             CSVLogger('%s/%d_metrics.csv' % (self.cpdir, tic)),
-            MetricsPlotCallback('%s/%d_metrics.png' % (self.cpdir, tic), '%s/%d_metrics.csv' % (self.cpdir, tic)),
+            MetricsPlotCallback('%s/%d_metrics.png' % (self.cpdir, tic),
+                                '%s/%d_metrics.csv' % (self.cpdir, tic)),
             ModelCheckpoint('%s/%d_model_{epoch:02d}_{val_nf_f1_mean:.3f}.hdf5' % (self.cpdir, tic), mode='max',
                             monitor='val_nf_f1_mean', save_best_only=False, verbose=1),
-            ReduceLROnPlateau(monitor='F1', factor=0.5, patience=5, min_lr=1e-4, mode='max'),
+            ReduceLROnPlateau(monitor='F1', factor=0.5,
+                              patience=5, min_lr=1e-4, mode='max'),
         ] + keras_callbacks
 
         trained = model.fit_generator(gen_trn, steps_per_epoch=nb_steps_trn, epochs=nb_epochs,
@@ -427,13 +437,13 @@ class UNet2DSummary(object):
                 different sizes, which is why it's not all just one 3D numpy array.
             M_summ: list of mask summary images corresponding to the series summary images. E.g.
                 M_summ[i] is the 2D mask corresponding to the 2D summary image at S_summ[i].
-            y_coords: list of tuples defining the min and max y-coordinate (rows) that should be 
+            y_coords: list of tuples defining the min and max y-coordinate (rows) that should be
                 sampled for generating batches. Order corresponds to the S_summ and M_summ arrays.
                 E.g. if y_coords[i] = (0, 300), then the generator will only sample S_summ[i] and M_summ[i]
                 from within that range of rows. This creates a separation such that one instance of the
                 generator can be used for training and another instance for validation.
             window_shape: shape of the windows that should be sampled.
-            nb_max_augment: the max number of random augmentations to apply. 
+            nb_max_augment: the max number of random augmentations to apply.
 
         """
 
@@ -457,7 +467,8 @@ class UNet2DSummary(object):
             ymin, ymax = y_coords[ds_idx]
             neuron_locs.append(zip(*np.where(m[ymin:ymax, :] == 1)))
 
-        # Dataset indexes and default probability distribution for sampling them.
+        # Dataset indexes and default probability distribution for sampling
+        # them.
         ds_idxs = np.arange(len(S_summ))
         ds_idxp = np.ones((len(ds_idxs))) / len(ds_idxs)
 
@@ -468,7 +479,8 @@ class UNet2DSummary(object):
                 fp = open(scores_path, 'rb')
                 names_to_scores = pickle.load(fp)
                 fp.close()
-                ds_idxp = np.array([1 - np.mean(names_to_scores[n]) for n in names])
+                ds_idxp = np.array(
+                    [1 - np.mean(names_to_scores[n]) for n in names])
                 ds_idxp /= np.sum(ds_idxp)
                 print([(name, '%.4lf' % p) for name, p in zip(names, ds_idxp)])
 
@@ -486,10 +498,13 @@ class UNet2DSummary(object):
                 hs, ws = s.shape
                 ymin, ymax = y_coords[ds_idx]
 
-                # Pick a random neuron location within this mask to center the window.
-                cy, cx = neuron_locs[ds_idx][rng.randint(0, len(neuron_locs[ds_idx]))]
+                # Pick a random neuron location within this mask to center the
+                # window.
+                cy, cx = neuron_locs[ds_idx][
+                    rng.randint(0, len(neuron_locs[ds_idx]))]
 
-                # Window boundaries with a random offset and extra care to stay in bounds.
+                # Window boundaries with a random offset and extra care to stay
+                # in bounds.
                 cy = min(max(ymin, cy + rng.randint(-5, 5)), ymax)
                 cx = min(max(0, cx + rng.randint(-5, 5)), ws)
                 y0 = max(ymin, int(cy - (hw / 2)))
@@ -504,7 +519,8 @@ class UNet2DSummary(object):
                 # Random augmentations.
                 nb_augment = rng.randint(0, nb_max_augment + 1)
                 for aug in rng.choice(augment_funcs, nb_augment):
-                    s_batch[b_idx], m_batch[b_idx] = aug(s_batch[b_idx], m_batch[b_idx])
+                    s_batch[b_idx], m_batch[b_idx] = aug(
+                        s_batch[b_idx], m_batch[b_idx])
 
             nb_yields += 1
             yield s_batch, m_batch
@@ -514,8 +530,8 @@ class UNet2DSummary(object):
         """Make predictions on the given dataset_paths. Currently uses batches of 1.
 
         Arguments:
-            dataset_paths: List of paths to HDF5 datasets. Each of these will be passed to self.series_summary_func and 
-                self.mask_summary_func to compute its series and mask summaries, so the HDF5 structure 
+            dataset_paths: List of paths to HDF5 datasets. Each of these will be passed to self.series_summary_func and
+                self.mask_summary_func to compute its series and mask summaries, so the HDF5 structure
                 should be compatible with those functions.
             model_path: Path to the serialized Keras model HDF5 file. This file should include both the
                 architecture and the weights.
@@ -523,11 +539,11 @@ class UNet2DSummary(object):
                 than this are padded up to match this shape.
             print_scores: Flag to print the Neurofinder evaluation metrics. Only works when the datasets include
                 ground-truth masks.
-            save: Flag to save the predictions as PNGs with outlines around the predicted neurons in red. If 
+            save: Flag to save the predictions as PNGs with outlines around the predicted neurons in red. If
                 the ground-truth masks are given, it will also show outlines around the groun-truth neurons.
             augmentation: Flag to perform 8x test-time augmentation. Predictions are made for each of the
                 augmentations, the augmentation is inverted to its original orientation, and the average
-                of all the augmentations is used as the prediction. In practice, this improved a 
+                of all the augmentations is used as the prediction. In practice, this improved a
                 Neurofinder submission from 0.5356 to 0.542.
 
         Returns:
@@ -542,7 +558,8 @@ class UNet2DSummary(object):
         logger.info('Loaded model from %s.' % model_path)
 
         # Currently only supporting full-sized windows.
-        assert window_shape == (512, 512), 'TODO: implement variable window sizes.'
+        assert window_shape == (
+            512, 512), 'TODO: implement variable window sizes.'
 
         # Padding helper.
         def pad(x):
@@ -565,7 +582,8 @@ class UNet2DSummary(object):
                 mp = np.zeros(s.shape)
                 for _, aug, inv in INVERTIBLE_2D_AUGMENTATIONS:
                     mpaug = model.predict(aug(s_batch))
-                    mp += inv(mpaug)[0, :hs, :ws] / len(INVERTIBLE_2D_AUGMENTATIONS)
+                    mp += inv(mpaug)[0, :hs, :ws] / \
+                        len(INVERTIBLE_2D_AUGMENTATIONS)
             else:
                 mp = model.predict(s_batch)[0, :hs, :ws]
 
@@ -586,7 +604,8 @@ class UNet2DSummary(object):
             if save:
                 if 'masks' in h5py.File(dsp):
                     m = self.mask_summary_func(dsp)
-                    outlined = mask_outlines(s, [m, mp.round()], ['blue', 'red'])
+                    outlined = mask_outlines(
+                        s, [m, mp.round()], ['blue', 'red'])
                 else:
                     outlined = mask_outlines(s, [mp.round()], ['red'])
                 save_path = '%s/%s_mp.png' % (self.cpdir, name)
@@ -598,3 +617,6 @@ class UNet2DSummary(object):
                         (mean_prec, mean_reca, mean_comb))
 
         return Mp, names
+
+    def wtfpep8(self, args, should, be, spaced):
+        pass

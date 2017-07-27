@@ -135,47 +135,47 @@ if __name__ == "__main__":
             # 3. Path to Matlab export created with the custom GUI.
             base + '010517/TSeries-01052017-0105-008_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
             # 4. Path where this dataset should be saved.
-            dsdir + '/sj.010517.hdf5'
+            dsdir + '/sj.neurons.010517.hdf5'
         ), (
             'sj.010617',
             base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/frame*.tif',
             base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/Exported_Matlab_Data_200.mat',
-            dsdir + '/sj.010617.hdf5'
+            dsdir + '/sj.neurons.010617.hdf5'
         ), (
             'sj.022616.01',
             base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame*.tif',
             base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.022616.01.hdf5'
+            dsdir + '/sj.neurons.022616.01.hdf5'
         ), (
             'sj.022616.02',
             base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/frame*.tif',
             base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.022616.02.hdf5'
+            dsdir + '/sj.neurons.022616.02.hdf5'
         ), (
             'sj.022616.03',
             base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame*.tif',
             base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.022616.03.hdf5'
+            dsdir + '/sj.neurons.022616.03.hdf5'
         ), (
             'sj.100716',
             base + '100716/TSeries-10072016-1007-003/512_pruned/frame*.tif',
             base + '100716/TSeries-10072016-1007-003/512_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.100716.hdf5'
+            dsdir + '/sj.neurons.100716.hdf5'
         ), (
             'sj.111216',
             base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/frame*.tif',
             base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.111216.hdf5'
+            dsdir + '/sj.neurons.111216.hdf5'
         ), (
             'sj.120116',
             base + '120116/TSeries-12012016-1201-002_stabilized/512_pruned/frame*.tif',
             base + '120116/TSeries-12012016-1201-002_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
-            dsdir + '/sj.120116.hdf5'
+            dsdir + '/sj.neurons.120116.hdf5'
         ), (
             'sj.120216',
             base + '120216/TSeries-12022016-1202-001_stabilized/512_pruned/frame*.tif',
             base + '120216/TSeries-12022016-1202-001_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
-            dsdir + '/sj.120216.hdf5'
+            dsdir + '/sj.neurons.120216.hdf5'
         )
     ]
 

@@ -39,6 +39,12 @@ def F1(yt, yp):
     return (2 * p * r) / (p + r + K.epsilon())
 
 
+def F2(yt, yp, beta=2.0):
+    p = prec(yt, yp)
+    r = reca(yt, yp)
+    return (1 + beta**2) * ((p * r) / (beta**2 * p + r + K.epsilon()))
+
+
 def jacc(yt, yp):
     """Keras Jaccard coefficient metric."""
     yp = K.round(yp)
@@ -66,7 +72,7 @@ def dice(yt, yp):
 
 
 def dice_loss(yt, yp):
-    """Approximate dice coefficient loss function. Cannot round yp because 
+    """Approximate dice coefficient loss function. Cannot round yp because
     that results in a non-differentiable function."""
     inter = K.sum(yt * yp)
     dsmooth = (2. * inter) / (K.sum(yt) + K.sum(yp) + 1e-7)
