@@ -18,6 +18,7 @@ rng = np.random
 
 
 class _SamplePlotCallback(Callback):
+    """Keras callback that plots sample predictions during training."""
 
     def __init__(self, model, save_path, traces, spikes, nb_plot=30, title='Epoch {epoch:d} loss={loss:.3f}'):
 
@@ -37,28 +38,37 @@ class _SamplePlotCallback(Callback):
         matplotlib.use('agg')
         import matplotlib.pyplot as plt
 
-        def scale(x): return x / np.max(x)
         spikes_pred = self._model.predict(self.traces[:self.nb_plot])
 
-        fig, axes = plt.subplots(self.nb_plot, 1, figsize=(8, self.nb_plot))
+        fig, axes = plt.subplots(self.nb_plot, 1, figsize=(12, self.nb_plot))
         for i, ax in enumerate(axes):
 
-            # Compute scaled signal.
-            t = scale(self.traces[i])
-            ax.plot(t, 'k')
+            # Plot signal.
+            t = self.traces[i]
+            ax.plot(t, c='k', linewidth=0.5)
 
-            # True labels as points.
-            ax.plot((self.spikes[i] * 3 - 2) * t, 'bo', label='yt', alpha=0.7)
+            # Scatter points for true spikes (blue circle).
+            xxt, = np.where(self.spikes[i] == 1)
+            ax.scatter(xxt, t[xxt], c='b', marker='o',
+                       alpha=0.5, label='True spike.')
 
-            # Predicted labels as a series.
-            ax.plot((spikes_pred[i].round() * 3 - 2) * t, 'rx')
+            # Scatter points for predicted spikes (red x).
+            xxp, = np.where(spikes_pred[i].round() == 1)
+            ax.scatter(xxp, t[xxp], c='r', marker='x',
+                       alpha=0.5, label='False positive.')
 
-            ax.set_ylim(0., 1.2)
-            if i == 0.:
+            # Scatter points for correctly predicting spikes.
+            xxc = np.intersect1d(xxt, xxp)
+            ax.scatter(xxc, t[xxc], c='g', marker='x',
+                       alpha=1., label='True positive.')
+
+            if i == 0 or i == len(axes) - 1:
                 ax.legend()
 
+        plt.subplots_adjust(left=None, wspace=None, hspace=0.5, right=None)
         plt.suptitle(self.title.format(epoch=epoch, **logs))
-        plt.savefig(self.save_path.format(epoch=epoch), dpi=150)
+        plt.savefig(self.save_path.format(epoch=epoch), dpi=250)
+        # plt.savefig('out.png', dpi=250)
         plt.close()
 
 
@@ -180,7 +190,7 @@ def maxpool1D(x, pool_size, pool_strides):
     return x[0, :, :, 0]
 
 
-def weighted_maxpool_binary_crossentropy(yt, yp, L=3, S=1, wp=2., wn=1.):
+def weighted_maxpool_binary_crossentropy(yt, yp, L=1, S=1, wp=2., wn=1.):
     """Applying max-pooling before computing binary crossentropy loss.
     Apply weights wp to ground-truth positives and wn to ground-truth negatives."""
     yt, yp = maxpool1D(yt, L, S), maxpool1D(yp, L, S)
@@ -189,7 +199,7 @@ def weighted_maxpool_binary_crossentropy(yt, yp, L=3, S=1, wp=2., wn=1.):
     return -1 * ((wp * losspos) + (wn * lossneg))
 
 
-def F2_maxpool(yt, yp, L=3, S=1):
+def F2_maxpool(yt, yp, L=1, S=1):
     return F2(maxpool1D(yt, L, S), maxpool1D(yp, L, S))
 
 
@@ -386,8 +396,9 @@ class TraceSegmentation(object):
 
     def _batch_gen(self, traces, spikes, shape, batch_size):
 
-        # Dataset > ROI > trace mean value.
+        # Dataset > ROI > trace mean, stdv values.
         trmean = [np.mean(t, axis=1) for t in traces]
+        trstdv = [np.std(t, axis=1) for t in traces]
 
         # Dataset > ROI > list of positive (spiked) indices.
         spidxs = [[np.where(_s > 0)[0] if np.sum(_s) else np.arange(len(_s))
@@ -395,8 +406,8 @@ class TraceSegmentation(object):
 
         while True:
 
-            # Empty batches.
-            tb = np.zeros((batch_size,) + shape, dtype=np.float16)
+            # Empty batches (traces and spikes).
+            tb = np.zeros((batch_size,) + shape, dtype=np.float64)
             sb = np.zeros((batch_size,) + shape, dtype=np.uint8)
 
             for bidx in range(batch_size):
@@ -415,9 +426,13 @@ class TraceSegmentation(object):
 
                 # Populate batch.
                 tb[bidx] = traces[didx][ridx][x0:x1]
-                tb[bidx] /= trmean[didx][ridx]
+                tb[bidx] -= trmean[didx][ridx]
+                tb[bidx] /= trstdv[didx][ridx]
                 sb[bidx] = spikes[didx][ridx][x0:x1]
 
+            # Zero-centered, unit variance.
+            assert -5 < np.mean(tb) < 5, np.mean(tb)
+            assert -5 < np.std(tb) < 5, np.std(tb)
             yield tb, sb
 
     def predict(self, dataset_paths, model_path, sample_shape=(128,), print_scores=True, save=True):

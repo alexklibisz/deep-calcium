@@ -44,7 +44,7 @@ def sj_ROI_trace(tiff_paths, exist_mask, h, w, cyy, cxx, radius):
             each row is the trace for a single ROI across all images.
     """
 
-    traces = np.zeros((len(cyy), len(tiff_paths)), dtype=np.float16)
+    traces = np.zeros((len(cyy), len(tiff_paths)), dtype=np.float32)
     volume = np.zeros((len(tiff_paths), h, w))
 
     # Read full images once.
@@ -139,7 +139,7 @@ def make_stjude_dataset(name, tiff_glob, n_to_path, mat_path, dataset_path, trac
     paths = [n_to_path(n) for n in range(1, nb_imgs + 1)]
     exist = np.array([int(os.path.exists(p)) for p in paths])
     h, w = imread([paths[i] for i in range(nb_imgs) if exist[i]][0]).shape
-    traces = fp.create_dataset('traces', (nb_rois, nb_imgs), dtype='float16')
+    traces = fp.create_dataset('traces', (nb_rois, nb_imgs), dtype='float64')
     spikes = fp.create_dataset('spikes', (nb_rois, nb_imgs), dtype='int8')
     traces[...] = trace_func(paths, exist, h, w, roi_to_pcy, roi_to_pcx, radius)
 
@@ -169,62 +169,62 @@ def preprocess(dataset_name, cpdir, dsdir):
             base + '010517/TSeries-01052017-0105-008_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
             dsdir + '/sj.spikes.010517.hdf5'
         ),
-        (
-            'sj.010617',
-            base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/frame*.tif',
-            lambda n: base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/frame%05d.tif' % n,
-            base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/Exported_Matlab_Data_200.mat',
-            dsdir + '/sj.spikes.010617.hdf5'
-        ),
         # (
-        #     'sj.022616.01',
-        #     base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame*.tif',
-        #     lambda n: base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame%05d.tif' % n,
-        #     base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/Exported_Matlab_Data.mat',
-        #     dsdir + '/sj.spikes.022616.01.hdf5'
+        #     'sj.010617',
+        #     base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/frame*.tif',
+        #     lambda n: base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/frame%05d.tif' % n,
+        #     base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/Exported_Matlab_Data_200.mat',
+        #     dsdir + '/sj.spikes.010617.hdf5'
         # ),
-        (
-            'sj.022616.02',
-            base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/frame*.tif',
-            lambda n: base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/frame%05d.tif' % n,
-            base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.spikes.022616.02.hdf5'
-        ),
+        # # (
+        # #     'sj.022616.01',
+        # #     base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame*.tif',
+        # #     lambda n: base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame%05d.tif' % n,
+        # #     base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/Exported_Matlab_Data.mat',
+        # #     dsdir + '/sj.spikes.022616.01.hdf5'
+        # # ),
         # (
-        #     'sj.022616.03',
-        #     base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame*.tif',
-        #     lambda n: base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame%05d.tif' % n,
-        #     base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/Exported_Matlab_Data.mat',
-        #     dsdir + '/sj.spikes.022616.03.hdf5'
+        #     'sj.022616.02',
+        #     base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/frame*.tif',
+        #     lambda n: base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/frame%05d.tif' % n,
+        #     base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/Exported_Matlab_Data.mat',
+        #     dsdir + '/sj.spikes.022616.02.hdf5'
         # ),
-        (
-            'sj.100716',
-            '100716/TSeries-10072016-1007-003/512_pruned/frame*.tif',
-            lambda n: base + '100716/TSeries-10072016-1007-003/512_pruned/frame%05d.tif' % n,
-            base + '100716/TSeries-10072016-1007-003/512_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.spikes.100716.hdf5'
-        ),
-        (
-            'sj.111216',
-            '111216/TSeries-11122016-1112-003_stabilized/512_pruned/frame*.tif',
-            lambda n: base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/frame%05d.tif' % n,
-            base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.spikes.111216.hdf5'
-        ),
-        (
-            'sj.120116',
-            '120116/TSeries-12012016-1201-002_stabilized/512_pruned/frame*.tif',
-            lambda n: base + '120116/TSeries-12012016-1201-002_stabilized/512_pruned/frame%05d.tif' % n,
-            base + '120116/TSeries-12012016-1201-002_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
-            dsdir + '/sj.spikes.120116.hdf5'
-        ),
-        (
-            'sj.120216',
-            '120216/TSeries-12022016-1202-001_stabilized/512_pruned/frame*.tif',
-            lambda n: base + '120216/TSeries-12022016-1202-001_stabilized/512_pruned/frame%05d.tif' % n,
-            base + '120216/TSeries-12022016-1202-001_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
-            dsdir + '/sj.spikes.120216.hdf5'
-        )
+        # # (
+        # #     'sj.022616.03',
+        # #     base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame*.tif',
+        # #     lambda n: base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame%05d.tif' % n,
+        # #     base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/Exported_Matlab_Data.mat',
+        # #     dsdir + '/sj.spikes.022616.03.hdf5'
+        # # ),
+        # (
+        #     'sj.100716',
+        #     '100716/TSeries-10072016-1007-003/512_pruned/frame*.tif',
+        #     lambda n: base + '100716/TSeries-10072016-1007-003/512_pruned/frame%05d.tif' % n,
+        #     base + '100716/TSeries-10072016-1007-003/512_pruned/Exported_Matlab_Data.mat',
+        #     dsdir + '/sj.spikes.100716.hdf5'
+        # ),
+        # (
+        #     'sj.111216',
+        #     '111216/TSeries-11122016-1112-003_stabilized/512_pruned/frame*.tif',
+        #     lambda n: base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/frame%05d.tif' % n,
+        #     base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/Exported_Matlab_Data.mat',
+        #     dsdir + '/sj.spikes.111216.hdf5'
+        # ),
+        # (
+        #     'sj.120116',
+        #     '120116/TSeries-12012016-1201-002_stabilized/512_pruned/frame*.tif',
+        #     lambda n: base + '120116/TSeries-12012016-1201-002_stabilized/512_pruned/frame%05d.tif' % n,
+        #     base + '120116/TSeries-12012016-1201-002_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
+        #     dsdir + '/sj.spikes.120116.hdf5'
+        # ),
+        # (
+        #     'sj.120216',
+        #     '120216/TSeries-12022016-1202-001_stabilized/512_pruned/frame*.tif',
+        #     lambda n: base + '120216/TSeries-12022016-1202-001_stabilized/512_pruned/frame%05d.tif' % n,
+        #     base + '120216/TSeries-12022016-1202-001_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
+        #     dsdir + '/sj.spikes.120216.hdf5'
+        # )
     ]
 
     if dataset_name != 'all':
@@ -266,7 +266,9 @@ def training(dataset_name, model_path, cpdir, dsdir):
         model_path=model_path,
         val_type='random_split',
         prop_trn=0.5,
-        prop_val=0.5
+        prop_val=0.5,
+        nb_epochs=20,
+        steps_trn=200
     )
 
 
