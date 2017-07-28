@@ -182,24 +182,41 @@ def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal'
     return model
 
 
-def maxpool1D(x, pool_size, pool_strides):
+def maxpool1D(x, pool_size, pool_strides, padding='same'):
     """1D pooling along the rows of a 2D array. Requires reshaping to work
     with the keras pool2d function."""
     x = K.expand_dims(K.expand_dims(x, axis=0), axis=-1)
-    x = K.pool2d(x, (1, pool_size), (1, pool_strides))
+    x = K.pool2d(x, (1, pool_size), (1, pool_strides), padding=padding)
     return x[0, :, :, 0]
 
 
-def weighted_maxpool_binary_crossentropy(yt, yp, L=1, S=1, wp=2., wn=1.):
-    """Applying max-pooling before computing binary crossentropy loss.
-    Apply weights wp to ground-truth positives and wn to ground-truth negatives."""
+def weighted_binary_crossentropy(yt, yp, margin=1, weightpos=2., weightneg=1.):
+    """Apply different weights to true positives and true negatives with
+    binary crossentropy loss. Allow an error margin to prevent penalizing
+    for off-by-N errors.
+
+    # Arguments
+        yt, yp: Keras ground-truth and predicted batch matrices.
+        margin: number of time-steps within which an error is tolerated. e.g.
+            margin = 1 would allow off-by-1 errors. This is implemented by
+            max-pooling the ground-truth and predicted matrices.
+        weightpos: weight multiplier for loss on true-positives.
+        weightnet: weight multiplier for loss on true-negatives.
+
+    # Returns
+        matrix of loss scalars with shape (batch size x 1).
+
+    """
+
+    L, S = 2 * margin + 1, 1  # pooling length and stride.
     yt, yp = maxpool1D(yt, L, S), maxpool1D(yp, L, S)
     losspos = yt * K.log(yp + 1e-7)
     lossneg = (1 - yt) * K.log(1 - yp + 1e-7)
-    return -1 * ((wp * losspos) + (wn * lossneg))
+    return -1 * ((weightpos * losspos) + (weightneg * lossneg))
 
 
-def F2_maxpool(yt, yp, L=1, S=1):
+def F2_margin(yt, yp, margin=1):
+    L, S = 2 * margin + 1, 1
     return F2(maxpool1D(yt, L, S), maxpool1D(yp, L, S))
 
 
@@ -268,12 +285,11 @@ class TraceSegmentation(object):
         self.custom_objects = {o.__name__: o for o in cobj}
 
     def fit(self, dataset_paths, model_path=None, proceed=False,
-            shape_trn=(128,), shape_val=(4096,),
+            shape_trn=(128,), shape_val=(4096,), error_margin=1.,
             batch_trn=32, batch_val=10,
             steps_trn=200, steps_val=20,
             val_type='leave_one_out', val_index=-1, prop_trn=0.8, prop_val=0.2,
-            nb_epochs=20, keras_callbacks=[],
-            optimizer=Adam(0.002), loss=weighted_maxpool_binary_crossentropy):
+            nb_epochs=20, keras_callbacks=[], optimizer=Adam(0.002)):
         """Constructs model based on parameters and trains with the given data.
 
         # Arguments
@@ -286,6 +302,8 @@ class TraceSegmentation(object):
             shape_val: 1D tuple defining the validation input length.
             steps_trn: number of updates per training epoch.
             steps_val: number of updates per validation epoch.
+            error_margin: number of frames within which a false positive error
+                is allowed. e.g. error_margin=1 would allow off-by-1 errors.
             val_type: string defining the train/validation split strategy.
                 Either 'leave_one_out' or 'random_split'.
             val_index: if the val_type is 'leave_one_out', this index in the
@@ -312,7 +330,14 @@ class TraceSegmentation(object):
         assert not (proceed and not model_path)
         assert val_type in {'leave_one_out', 'random_split'}
 
-        # Load network from disk.
+        # Define metrics and loss based on error margin.
+        def F2M(yt, yp):
+            return F2_margin(yt, yp, margin=error_margin)
+
+        def loss(yt, yp):
+            return weighted_binary_crossentropy(yt, yp, margin=error_margin)
+
+            # Load network from disk.
         if model_path:
             lmwnis = load_model_with_new_input_shape
             model = lmwnis(model_path, shape_trn, compile=proceed,
@@ -328,7 +353,7 @@ class TraceSegmentation(object):
 
         # Recompile network if proceed is false.
         if not proceed:
-            m = [F2, prec, reca, F2_maxpool, ytspks, ypspks]
+            m = [F2, prec, reca, F2M, ytspks, ypspks]
             model.compile(optimizer=optimizer, loss=loss, metrics=m)
             model_val.compile(optimizer=optimizer, loss=loss, metrics=m)
 
@@ -368,15 +393,15 @@ class TraceSegmentation(object):
             _ValidationMetricsCB(model_val, gen_val, steps_val),
             _SamplePlotCallback(model,
                                 '%s/%d_samples_{epoch:03d}_trn.png' % cpt, *next(gen_trn),
-                                title='Epoch {epoch:d} reca={reca:.3f} prec={prec:.3f}'),
+                                title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
             _SamplePlotCallback(model_val,
                                 '%s/%d_samples_{epoch:03d}_val.png' % cpt, *next(gen_val),
-                                title='Epoch {epoch:d} val_reca={val_reca:.3f} val_prec={val_prec:.3f}'),
-            ModelCheckpoint('%s/%d_model_val_F2_{val_F2:.3f}_{epoch:d}.hdf5' % cpt,
-                            monitor='val_F2', mode='max', verbose=1, save_best_only=True),
+                                title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
+            ModelCheckpoint('%s/%d_model_val_F2M_{val_F2:3f}_{epoch:d}.hdf5' % cpt,
+                            monitor='val_F2M', mode='max', verbose=1, save_best_only=True),
             CSVLogger('%s/%d_metrics.csv' % cpt),
             MetricsPlotCallback('%s/%d_metrics.png' % cpt),
-            EarlyStopping(monitor='val_F2', min_delta=0.001, patience=10,
+            EarlyStopping(monitor='val_F2M', min_delta=0.001, patience=10,
                           verbose=1, mode='max')
         ]
 
