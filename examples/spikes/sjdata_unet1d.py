@@ -26,8 +26,7 @@ def training(dataset_name, model_path, cpdir, dsdir):
         val_type='random_split',
         prop_trn=0.5,
         prop_val=0.5,
-        nb_epochs=20,
-        steps_trn=200,
+        nb_epochs=30,
         error_margin=2
     )
 

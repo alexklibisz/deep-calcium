@@ -88,7 +88,7 @@ class _ValidationMetricsCB(Callback):
             logs['val_%s' % name] = metric
 
 
-def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.2):
+def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.15):
     """Builds and returns the UNet architecture using Keras.
     # Arguments
         window_shape: tuple of one integer defining the input/output window shape.
@@ -220,12 +220,12 @@ def F2_margin(yt, yp, margin=1):
 
 
 def ytspks(yt, yp):
-    """On average, how many spikes in yt."""
+    """On average, how many spikes in each yt spikes sample."""
     return K.sum(yt, axis=1)
 
 
 def ypspks(yt, yp):
-    """On average, how many spikes in yp."""
+    """On average, how many spikes in each yp spikes prediction."""
     return K.sum(K.round(yp), axis=1)
 
 
@@ -289,9 +289,8 @@ class UNet1D(object):
         self.custom_objects = {o.__name__: o for o in cobj}
 
     def fit(self, dataset_paths, model_path=None, proceed=False,
-            shape_trn=(128,), shape_val=(4096,), error_margin=1.,
+            shape_trn=(1024,), shape_val=(4096,), error_margin=1.,
             batch_trn=32, batch_val=10,
-            steps_trn=200, steps_val=50,
             val_type='leave_one_out', val_index=-1, prop_trn=0.8, prop_val=0.2,
             nb_epochs=20, keras_callbacks=[], optimizer=Adam(0.002)):
         """Constructs model based on parameters and trains with the given data.
@@ -387,20 +386,22 @@ class UNet1D(object):
             spikes_val = [spikes[i] for i in idxs_val]
 
         # Training and validation generators.
+        def steps(tt, s, b): return int(sum([t.size for t in tt]) / s / b)
+        steps_trn = steps(traces_trn, shape_trn[0], batch_trn)
+        steps_val = steps(traces_val, shape_val[0], batch_val)
         bg = self._batch_gen
-        gen_trn = bg(traces_trn, spikes_trn, shape_trn, batch_trn)
-        gen_val = bg(traces_val, spikes_val, shape_val, batch_val)
+        gen_trn = bg(traces_trn, spikes_trn, shape_trn, batch_trn, steps_trn, 0)
+        gen_val = bg(traces_val, spikes_val, shape_val, batch_val, steps_val, 1)
 
         # Callbacks.
         cpt = (self.cpdir, int(time()))
+        spc = _SamplePlotCallback
         cb = [
             _ValidationMetricsCB(model_val, gen_val, steps_val),
-            _SamplePlotCallback(model,
-                                '%s/%d_samples_{epoch:03d}_trn.png' % cpt, *next(gen_trn),
-                                title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
-            _SamplePlotCallback(model_val,
-                                '%s/%d_samples_{epoch:03d}_val.png' % cpt, *next(gen_val),
-                                title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
+            spc(model, '%s/%d_samples_{epoch:03d}_trn.png' % cpt, *next(gen_trn),
+                title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
+            spc(model_val, '%s/%d_samples_{epoch:03d}_val.png' % cpt,
+                *next(gen_val), title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
             ModelCheckpoint('%s/%d_model_val_F2M_{val_F2M:3f}_{epoch:d}.hdf5' % cpt,
                             monitor='val_F2M', mode='max', verbose=1, save_best_only=True),
             CSVLogger('%s/%d_metrics.csv' % cpt),
@@ -423,37 +424,36 @@ class UNet1D(object):
         # Return history and best model path.
         return trained.history, '%s/model_val_nf_f1_mean.hdf5' % self.cpdir
 
-    def _batch_gen(self, traces, spikes, shape, batch_size):
+    def _batch_gen(self, traces, spikes, shape, batch_size, nb_steps, reseed=False):
 
-        # Dataset > ROI > list of positive (spiked) indices.
-        spidxs = [[np.where(_s > 0)[0] if np.sum(_s) else np.arange(len(_s))
-                   for _s in s] for s in spikes]
+        seed = rng.randint(0, 10**3)
+        _rng = np.random.RandomState(seed)
 
         while True:
 
-            # Empty batches (traces and spikes).
-            tb = np.zeros((batch_size,) + shape, dtype=np.float64)
-            sb = np.zeros((batch_size,) + shape, dtype=np.uint8)
+            _rng = np.random.RandomState(seed) if reseed else _rng
 
-            for bidx in range(batch_size):
+            for _ in range(nb_steps):
 
-                # Sample random indices for dataset, ROI, spike index.
-                didx = rng.randint(0, len(traces))
-                ridx = rng.randint(0, len(spikes[didx]))
-                sidx = rng.choice(spidxs[didx][ridx])
+                # Empty batches (traces and spikes).
+                tb = np.zeros((batch_size,) + shape, dtype=np.float64)
+                sb = np.zeros((batch_size,) + shape, dtype=np.uint8)
 
-                # Pick start and end point around positive spike index.
-                w, = shape
-                x0 = rng.randint(sidx + 1 - w, sidx - 1 + w)
-                x0 = max(x0, 0)
-                x0 = min(x0, len(spikes[didx][ridx]) - w)
-                x1 = x0 + w
+                for bidx in range(batch_size):
 
-                # Populate batch.
-                tb[bidx] = traces[didx][ridx][x0:x1]
-                sb[bidx] = spikes[didx][ridx][x0:x1]
+                    # Sample random indices for dataset, ROI, spike index.
+                    didx = _rng.randint(0, len(traces))
+                    ridx = _rng.randint(0, len(spikes[didx]))
 
-            yield tb, sb
+                    # Pick start and end point around positive spike index.
+                    x0 = _rng.randint(0, len(spikes[didx][ridx]) - shape[0])
+                    x1 = x0 + shape[0]
+
+                    # Populate batch.
+                    tb[bidx] = traces[didx][ridx][x0:x1]
+                    sb[bidx] = spikes[didx][ridx][x0:x1]
+
+                yield tb, sb
 
     def predict(self, dataset_paths, model_path, sample_shape=(128,), print_scores=True, save=True):
         pass
