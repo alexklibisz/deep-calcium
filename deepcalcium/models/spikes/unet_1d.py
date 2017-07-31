@@ -252,7 +252,7 @@ def _dataset_spikes_func(dspath):
     return spikes
 
 
-class TraceSegmentation(object):
+class UNet1D(object):
     """Trace segmentation wrapper class. In general, this type of model takes a
     calcium trace of length N frames and return a binary segmentation
     of length N frames. e.g. f([0.1, 0.2, ...]) -> [0, 1, ...].
