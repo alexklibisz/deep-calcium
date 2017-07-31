@@ -116,9 +116,8 @@ def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal'
     def up_layer(nb_filters, x):
         return UpSampling1D()(x)
 
-    def conv_layer(nb_filters, x):
-        x = Conv1D(nb_filters, 9, strides=1, padding='same',
-                   kernel_initializer=cki)(x)
+    def conv_layer(nbf, x):
+        x = Conv1D(nbf, 5, strides=1, padding='same', kernel_initializer=cki)(x)
         x = BatchNormalization(axis=-1)(x)
         return Activation('relu')(x)
 
@@ -238,6 +237,11 @@ def _dataset_traces_func(dspath):
     fp = h5py.File(dspath)
     traces = fp.get('traces')[...]
     fp.close()
+    m = np.mean(traces, axis=1, keepdims=True)
+    s = np.std(traces, axis=1, keepdims=True)
+    traces = (traces - m) / s
+    assert -5 < np.mean(traces) < 5, np.mean(traces)
+    assert -5 < np.std(traces) < 5, np.std(traces)
     return traces
 
 
@@ -287,7 +291,7 @@ class TraceSegmentation(object):
     def fit(self, dataset_paths, model_path=None, proceed=False,
             shape_trn=(128,), shape_val=(4096,), error_margin=1.,
             batch_trn=32, batch_val=10,
-            steps_trn=200, steps_val=20,
+            steps_trn=200, steps_val=50,
             val_type='leave_one_out', val_index=-1, prop_trn=0.8, prop_val=0.2,
             nb_epochs=20, keras_callbacks=[], optimizer=Adam(0.002)):
         """Constructs model based on parameters and trains with the given data.
@@ -331,13 +335,13 @@ class TraceSegmentation(object):
         assert val_type in {'leave_one_out', 'random_split'}
 
         # Define metrics and loss based on error margin.
-        def F2M(yt, yp):
-            return F2_margin(yt, yp, margin=error_margin)
+        def F2M(yt, yp, margin=error_margin):
+            return F2_margin(yt, yp, margin)
 
-        def loss(yt, yp):
-            return weighted_binary_crossentropy(yt, yp, margin=error_margin)
+        def loss(yt, yp, margin=error_margin):
+            return weighted_binary_crossentropy(yt, yp, margin)
 
-            # Load network from disk.
+        # Load network from disk.
         if model_path:
             lmwnis = load_model_with_new_input_shape
             model = lmwnis(model_path, shape_trn, compile=proceed,
@@ -397,7 +401,7 @@ class TraceSegmentation(object):
             _SamplePlotCallback(model_val,
                                 '%s/%d_samples_{epoch:03d}_val.png' % cpt, *next(gen_val),
                                 title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
-            ModelCheckpoint('%s/%d_model_val_F2M_{val_F2:3f}_{epoch:d}.hdf5' % cpt,
+            ModelCheckpoint('%s/%d_model_val_F2M_{val_F2M:3f}_{epoch:d}.hdf5' % cpt,
                             monitor='val_F2M', mode='max', verbose=1, save_best_only=True),
             CSVLogger('%s/%d_metrics.csv' % cpt),
             MetricsPlotCallback('%s/%d_metrics.png' % cpt),
@@ -420,10 +424,6 @@ class TraceSegmentation(object):
         return trained.history, '%s/model_val_nf_f1_mean.hdf5' % self.cpdir
 
     def _batch_gen(self, traces, spikes, shape, batch_size):
-
-        # Dataset > ROI > trace mean, stdv values.
-        trmean = [np.mean(t, axis=1) for t in traces]
-        trstdv = [np.std(t, axis=1) for t in traces]
 
         # Dataset > ROI > list of positive (spiked) indices.
         spidxs = [[np.where(_s > 0)[0] if np.sum(_s) else np.arange(len(_s))
@@ -451,13 +451,8 @@ class TraceSegmentation(object):
 
                 # Populate batch.
                 tb[bidx] = traces[didx][ridx][x0:x1]
-                tb[bidx] -= trmean[didx][ridx]
-                tb[bidx] /= trstdv[didx][ridx]
                 sb[bidx] = spikes[didx][ridx][x0:x1]
 
-            # Zero-centered, unit variance.
-            assert -5 < np.mean(tb) < 5, np.mean(tb)
-            assert -5 < np.std(tb) < 5, np.std(tb)
             yield tb, sb
 
     def predict(self, dataset_paths, model_path, sample_shape=(128,), print_scores=True, save=True):

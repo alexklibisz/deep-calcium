@@ -44,7 +44,7 @@ def sj_ROI_trace(tiff_paths, exist_mask, h, w, cyy, cxx, radius):
             each row is the trace for a single ROI across all images.
     """
 
-    traces = np.zeros((len(cyy), len(tiff_paths)), dtype=np.float32)
+    # Volume to populate.
     volume = np.zeros((len(tiff_paths), h, w))
 
     # Read full images once.
@@ -57,9 +57,10 @@ def sj_ROI_trace(tiff_paths, exist_mask, h, w, cyy, cxx, radius):
             exist_mask[i] = 0.
             pass
 
-    # Mean interpolation.
-    mean = np.mean(volume[np.where(exist_mask == 1.)], axis=0)
-    volume[np.where(exist_mask == 0.)] = mean
+    # Traces to populate and helpers for segmentation and interpolation.
+    traces = np.zeros((len(cyy), len(tiff_paths)), dtype=np.float32)
+    zzok, = np.where(exist_mask == 1.)
+    rng = np.random.RandomState(sum(exist_mask))
 
     for i, (cy, cx) in tqdm(enumerate(zip(cyy, cxx))):
 
@@ -68,12 +69,22 @@ def sj_ROI_trace(tiff_paths, exist_mask, h, w, cyy, cxx, radius):
         y1, x1 = min(h - 1, cy + radius), min(w - 1, cx + radius)
         wdw = volume[:, y0:y1, x0:x1]
 
-        # Simple segmentation based on standard deviation.
-        stdv = np.std(wdw, axis=0)
+        # Segmentation based on standard deviation of non-missing frames.
+        stdv = np.std(wdw[zzok], axis=0)
         mask = 1. * (stdv > np.median(stdv))
 
         # Mean trace from masked pixels.
         traces[i] = np.sum(wdw * mask, axis=(1, 2)) / np.sum(mask)
+
+        # Interpolate trace at missing images by computing a straight line
+        # between the surrounding trace values and adding scaled unit Gaussian
+        # noise. Code below follows y = mx+b notation.
+        gaps = [(a, b) for a, b in zip(zzok[:-1], zzok[1:]) if b - a > 1]
+        for x0, x1 in gaps:
+            y0, y1 = traces[i, x0], traces[i, x1]
+            m = (y1 - y0) / (x1 - x0)
+            noise = (x1 - x0) * rng.randn(x1 - x0)
+            traces[i, x0:x1] = np.arange(x1 - x0) * m + y0 + noise
 
     return traces
 
@@ -108,7 +119,7 @@ def make_stjude_dataset(name, tiff_glob, n_to_path, mat_path, dataset_path, trac
     fp = h5py.File(dataset_path, 'w')
     fp.attrs['name'] = name
 
-    # TODO: add the sampling rate as an attribute.
+    # TODO: add the sampling rate as an attribute for use with e.g. C2S.
     fp.attrs['sample_rate'] = -1
 
     # Load file and extract application state.
@@ -240,12 +251,13 @@ def preprocess(dataset_name, cpdir, dsdir):
         fp = h5py.File(path)
         traces = fp.get('traces')[:10]
         spikes = fp.get('spikes')[:10]
-        fig, axes = plt.subplots(6, 1, figsize=(20, 20))
+        fig, axes = plt.subplots(10, 1, figsize=(30, 20))
         for i in range(len(axes)):
-            t = traces[i, 0:800]
-            s = spikes[i, 0:800]
+            t = traces[i, :2500]
+            s = spikes[i, :2500]
             axes[i].plot(t, 'k')
-            axes[i].plot(t * (s * 2 - 1), 'ro')
+            xx, = np.where(s == 1.)
+            axes[i].scatter(xx, t[xx], c='b', marker='o')
             axes[i].set_ylim(0,  1.2 * np.max(t))
         plt.suptitle('%s\n%d ROIs, %d images' %
                      (path, fp.get('traces').shape[0], fp.get('traces').shape[1]))
@@ -273,7 +285,12 @@ def training(dataset_name, model_path, cpdir, dsdir):
     )
 
 
-def evaluation(dataset_name, model_path, cpdir, dsdir):
+def prediction(dataset_name, model_path, cpdir, dsdir):
+
+    # TODO: would be good to define the networks such that any pre-processing is
+    # built-in as a layer to make prediction simpler less tightly-coupled to the
+    # code that was used when the network was defined.
+
     pass
 
 
@@ -304,11 +321,10 @@ if __name__ == "__main__":
                         default=DSDIR)
 
     # Training cli.
-    sp_eva = sp.add_parser('evaluate', help='CLI for training.')
-    sp_eva.set_defaults(which='evaluate')
+    sp_eva = sp.add_parser('predict', help='CLI for training.')
+    sp_eva.set_defaults(which='predict')
     sp_eva.add_argument('dataset', help='dataset name', default='all')
-    sp_eva.add_argument(
-        '-m', '--model', help='path to model', required=True)
+    sp_eva.add_argument('-m', '--model', help='path to model', required=True)
     sp_eva.add_argument('-c', '--cpdir', help='checkpoint directory',
                         default=CPDIR)
     sp_eva.add_argument('-d', '--dsdir', help='datasets directory',
@@ -320,5 +336,5 @@ if __name__ == "__main__":
     if args['which'] == 'train':
         training(args['dataset'], args['model'], args['cpdir'], args['dsdir'])
 
-    if args['which'] == 'evaluate':
-        evaluation(args['dataset'], args['model'], args['cpdir'], args['dsdir'])
+    if args['which'] == 'predict':
+        prediction(args['dataset'], args['model'], args['cpdir'], args['dsdir'])
