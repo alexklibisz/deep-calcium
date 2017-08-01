@@ -95,6 +95,7 @@ def make_stjude_dataset(name, tiff_glob, n_to_path, mat_path, dataset_path, trac
         n_to_path: function that takes a number and returns the corresponding tiff path.
         mat_path: path to custom matlab file that defines annotated masks for each dataset.
         dataset_path: path where the created dataset is saved.
+        trace_func: function used to extract traces from a set of TIFFs.
 
     # Returns
         dataset_path: path to the HDF5 dataset with structure described above.
@@ -154,7 +155,7 @@ def make_stjude_dataset(name, tiff_glob, n_to_path, mat_path, dataset_path, trac
     return dataset_path
 
 
-def preprocess(dataset_name, cpdir, dsdir):
+def preprocess(dataset_name, cpdir, dsdir, plots=False):
     """Defines the arguments to convert one or more St. Jude formatted
     datasets into HDF5 format and calls make_stjude_dataset to convert them.
 
@@ -238,8 +239,12 @@ def preprocess(dataset_name, cpdir, dsdir):
     import matplotlib.pyplot as plt
 
     # Convert and plot each dataset.
-    dataset_paths = [make_stjude_dataset(*args) for args in dataset_args]
-    for path in dataset_paths:
+    dataset_paths = []
+    for args in dataset_args:
+        path = make_stjude_dataset(*args)
+        dataset_paths.append(path)
+        if not plots:
+            continue
         fp = h5py.File(path)
         traces = fp.get('traces')[:10]
         spikes = fp.get('spikes')[:10]

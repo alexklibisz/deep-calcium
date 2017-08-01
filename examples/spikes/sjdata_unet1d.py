@@ -13,20 +13,20 @@ import os
 import sys
 sys.path.append('.')
 from examples.spikes.sjdata_preprocess import preprocess
-from deepcalcium.models.spikes.unet_1d import UNet1D
+from deepcalcium.models.spikes.unet_1d_segmentation import UNet1DSegmentation
 
 
 def training(dataset_name, model_path, cpdir, dsdir):
     np.random.seed(int(os.getpid()))
     dataset_paths = preprocess(dataset_name, cpdir, dsdir)
-    model = UNet1D(cpdir=cpdir)
+    model = UNet1DSegmentation(cpdir=cpdir)
     return model.fit(
         dataset_paths,
         model_path=model_path,
         val_type='random_split',
-        prop_trn=0.5,
-        prop_val=0.5,
-        nb_epochs=30,
+        prop_trn=0.75,
+        prop_val=0.25,
+        epochs=100,
         error_margin=2
     )
 
@@ -45,7 +45,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     DSDIR = '%s/.deep-calcium-datasets/stjude' % os.path.expanduser('~')
-    CPDIR = 'checkpoints/traceseg'
+    CPDIR = 'checkpoints/sjspikes_unet1d'
 
     if not os.path.exists(DSDIR):
         os.mkdir(DSDIR)
@@ -53,7 +53,7 @@ if __name__ == "__main__":
     if not os.path.exists(CPDIR):
         os.mkdir(CPDIR)
 
-    ap = argparse.ArgumentParser(description='CLI for trace segmentations.')
+    ap = argparse.ArgumentParser(description='UNet1D trace segmentations.')
     sp = ap.add_subparsers(title='actions', description='Choose an action.')
 
     # Training cli.

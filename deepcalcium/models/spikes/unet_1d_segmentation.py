@@ -1,7 +1,9 @@
 from __future__ import division, print_function
+from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, CSVLogger, ReduceLROnPlateau, EarlyStopping
 from keras.optimizers import Adam
 from keras.losses import binary_crossentropy
+from math import ceil
 from os import path, mkdir
 from scipy.misc import imsave
 from time import time
@@ -67,8 +69,7 @@ class _SamplePlotCallback(Callback):
 
         plt.subplots_adjust(left=None, wspace=None, hspace=0.5, right=None)
         plt.suptitle(self.title.format(epoch=epoch, **logs))
-        plt.savefig(self.save_path.format(epoch=epoch), dpi=250)
-        # plt.savefig('out.png', dpi=250)
+        plt.savefig(self.save_path.format(epoch=epoch), dpi=60)
         plt.close()
 
 
@@ -252,7 +253,7 @@ def _dataset_spikes_func(dspath):
     return spikes
 
 
-class UNet1D(object):
+class UNet1DSegmentation(object):
     """Trace segmentation wrapper class. In general, this type of model takes a
     calcium trace of length N frames and return a binary segmentation
     of length N frames. e.g. f([0.1, 0.2, ...]) -> [0, 1, ...].
@@ -285,26 +286,19 @@ class UNet1D(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-        cobj = []
-        self.custom_objects = {o.__name__: o for o in cobj}
-
-    def fit(self, dataset_paths, model_path=None, proceed=False,
-            shape_trn=(1024,), shape_val=(4096,), error_margin=1.,
-            batch_trn=32, batch_val=10,
+    def fit(self, dataset_paths, model_path=None,
+            shape_trn=(4096,), shape_val=(4096,), error_margin=1.,
+            batch_trn=32, batch_val=32,
             val_type='leave_one_out', val_index=-1, prop_trn=0.8, prop_val=0.2,
-            nb_epochs=20, keras_callbacks=[], optimizer=Adam(0.002)):
+            epochs=20, keras_callbacks=[], optimizer=Adam(0.001)):
         """Constructs model based on parameters and trains with the given data.
 
         # Arguments
             dataset_paths: list of paths to HDF5 datasets used for training.
             model_path: filesystem path to serialized model that should be
                 loaded into the network.
-            proceed: whether to continue training where the model left off or
-                start over. Only relevant when model_path is given.
             shape_trn: 1D tuple defining the training input length.
             shape_val: 1D tuple defining the validation input length.
-            steps_trn: number of updates per training epoch.
-            steps_val: number of updates per validation epoch.
             error_margin: number of frames within which a false positive error
                 is allowed. e.g. error_margin=1 would allow off-by-1 errors.
             val_type: string defining the train/validation split strategy.
@@ -315,6 +309,9 @@ class UNet1D(object):
                 calcium traces is used for training.
             prop_val: if the val_type is 'random_split', this proportion of all
                 calcium traces is used for validation.
+            keras_callbacks: additional callbacks that should be included.
+            epochs: number of epochs. 1 epoch indicates 1 sample taken from every
+                training trace.
             optimizer: instantiated keras optimizer.
             loss: loss function, either string or an actual keras-compatible
                 loss function.
@@ -330,7 +327,6 @@ class UNet1D(object):
         # Error check.
         assert len(shape_trn) == 1
         assert len(shape_val) == 1
-        assert not (proceed and not model_path)
         assert val_type in {'leave_one_out', 'random_split'}
 
         # Define metrics and loss based on error margin.
@@ -340,25 +336,24 @@ class UNet1D(object):
         def loss(yt, yp, margin=error_margin):
             return weighted_binary_crossentropy(yt, yp, margin)
 
+        metrics = [F2, prec, reca, F2M, ytspks, ypspks]
+        custom_objects = {o.__name__: o for o in metrics + [loss]}
+
         # Load network from disk.
         if model_path:
             lmwnis = load_model_with_new_input_shape
-            model = lmwnis(model_path, shape_trn, compile=proceed,
-                           custom_objects=self.custom_objects)
-            model_val = lmwnis(model_path, shape_val, compile=False,
-                               custom_objects=self.custom_objects)
+            model = lmwnis(model_path, shape_trn, compile=True,
+                           custom_objects=custom_objects)
+            model_val = lmwnis(model_path, shape_val, compile=True,
+                               custom_objects=custom_objects)
 
         # Define, compile network.
         else:
             model = self.net_builder_func(shape_trn)
             model.summary()
             model_val = self.net_builder_func(shape_val)
-
-        # Recompile network if proceed is false.
-        if not proceed:
-            m = [F2, prec, reca, F2M, ytspks, ypspks]
-            model.compile(optimizer=optimizer, loss=loss, metrics=m)
-            model_val.compile(optimizer=optimizer, loss=loss, metrics=m)
+            model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+            model_val.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
         # Extract traces and spikes from datasets.
         traces = [self.dataset_traces_func(p) for p in dataset_paths]
@@ -377,18 +372,21 @@ class UNet1D(object):
             spikes_trn = [spikes[i][ix, :] for i, ix in enumerate(idxs_trn)]
             traces_val = [traces[i][ix, :] for i, ix in enumerate(idxs_val)]
             spikes_val = [spikes[i][ix, :] for i, ix in enumerate(idxs_val)]
-        elif val_type == 'leave_one_out':
-            idxs_trn = [i for i in range(len(traces)) if i != val_index]
-            idxs_val = [i for i in range(len(traces)) if i == val_index]
-            traces_trn = [traces[i] for i in idxs_trn]
-            spikes_trn = [spikes[i] for i in idxs_trn]
-            traces_val = [traces[i] for i in idxs_val]
-            spikes_val = [spikes[i] for i in idxs_val]
+        # elif val_type == 'leave_one_out':
+        #     idxs_trn = [i for i in range(len(traces)) if i != val_index]
+        #     idxs_val = [i for i in range(len(traces)) if i == val_index]
+        #     traces_trn = [traces[i] for i in idxs_trn]
+        #     spikes_trn = [spikes[i] for i in idxs_trn]
+        #     traces_val = [traces[i] for i in idxs_val]
+        #     spikes_val = [spikes[i] for i in idxs_val]
+
+        # 1 epoch = 1 sample from every trace.
+        def steps(tr, b):
+            return int(sum([len(t) for t in tr]) / b)
+        steps_trn = steps(traces_trn, batch_trn)
+        steps_val = steps(traces_val, batch_val)
 
         # Training and validation generators.
-        def steps(tt, s, b): return int(sum([t.size for t in tt]) / s / b)
-        steps_trn = steps(traces_trn, shape_trn[0], batch_trn)
-        steps_val = steps(traces_val, shape_val[0], batch_val)
         bg = self._batch_gen
         gen_trn = bg(traces_trn, spikes_trn, shape_trn, batch_trn, steps_trn, 0)
         gen_val = bg(traces_val, spikes_val, shape_val, batch_val, steps_val, 1)
@@ -405,14 +403,12 @@ class UNet1D(object):
             ModelCheckpoint('%s/%d_model_val_F2M_{val_F2M:3f}_{epoch:d}.hdf5' % cpt,
                             monitor='val_F2M', mode='max', verbose=1, save_best_only=True),
             CSVLogger('%s/%d_metrics.csv' % cpt),
-            MetricsPlotCallback('%s/%d_metrics.png' % cpt),
-            EarlyStopping(monitor='val_F2M', min_delta=0.001, patience=10,
-                          verbose=1, mode='max')
+            MetricsPlotCallback('%s/%d_metrics.png' % cpt)
         ]
 
         # Train.
         trained = model.fit_generator(gen_trn, steps_per_epoch=steps_trn,
-                                      epochs=nb_epochs, callbacks=cb, verbose=1)
+                                      epochs=epochs, callbacks=cb, verbose=1)
 
         # Summary of metrics.
         logger = logging.getLogger(funcname())
@@ -426,12 +422,17 @@ class UNet1D(object):
 
     def _batch_gen(self, traces, spikes, shape, batch_size, nb_steps, reseed=False):
 
-        seed = rng.randint(0, 10**3)
-        _rng = np.random.RandomState(seed)
+        def shuffle(x):
+            return _rng.choice(x, len(x), replace=False)
+
+        localseed = rng.randint(0, 10**3)
+        _rng = np.random.RandomState(localseed)
 
         while True:
 
-            _rng = np.random.RandomState(seed) if reseed else _rng
+            _rng = np.random.RandomState(localseed) if reseed else _rng
+            didxs = cycle(shuffle(np.arange(len(traces))))
+            sidxs = [cycle(shuffle(np.arange(len(s)))) for s in spikes]
 
             for _ in range(nb_steps):
 
@@ -441,17 +442,17 @@ class UNet1D(object):
 
                 for bidx in range(batch_size):
 
-                    # Sample random indices for dataset, ROI, spike index.
-                    didx = _rng.randint(0, len(traces))
-                    ridx = _rng.randint(0, len(spikes[didx]))
+                    # Dataset and sample indices.
+                    didx = next(didxs)
+                    sidx = next(sidxs[didx])
 
                     # Pick start and end point around positive spike index.
-                    x0 = _rng.randint(0, len(spikes[didx][ridx]) - shape[0])
+                    x0 = _rng.randint(0, len(spikes[didx][sidx]) - shape[0])
                     x1 = x0 + shape[0]
 
                     # Populate batch.
-                    tb[bidx] = traces[didx][ridx][x0:x1]
-                    sb[bidx] = spikes[didx][ridx][x0:x1]
+                    tb[bidx] = traces[didx][sidx][x0:x1]
+                    sb[bidx] = spikes[didx][sidx][x0:x1]
 
                 yield tb, sb
 
