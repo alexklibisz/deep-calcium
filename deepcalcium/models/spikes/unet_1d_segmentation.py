@@ -290,7 +290,7 @@ class UNet1DSegmentation(object):
             shape_trn=(4096,), shape_val=(4096,), error_margin=1.,
             batch_trn=32, batch_val=32,
             val_type='leave_one_out', val_index=-1, prop_trn=0.8, prop_val=0.2,
-            epochs=20, keras_callbacks=[], optimizer=Adam(0.001)):
+            epochs=20, keras_callbacks=[], optimizer=Adam(0.002)):
         """Constructs model based on parameters and trains with the given data.
 
         # Arguments
