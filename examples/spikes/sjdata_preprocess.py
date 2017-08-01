@@ -74,7 +74,7 @@ def sj_ROI_trace(tiff_paths, exist_mask, h, w, cyy, cxx, radius):
         for x0, x1 in gaps:
             y0, y1 = traces[i, x0], traces[i, x1]
             m = (y1 - y0) / (x1 - x0)
-            noise = (x1 - x0) * rng.randn(x1 - x0)
+            noise = rng.normal(0, max(1, 0.1 * abs(y1 - y0)), x1 - x0)
             traces[i, x0:x1] = np.arange(x1 - x0) * m + y0 + noise
 
     return traces
@@ -110,12 +110,13 @@ def make_stjude_dataset(name, tiff_glob, n_to_path, mat_path, dataset_path, trac
     fp = h5py.File(dataset_path, 'w')
     fp.attrs['name'] = name
 
-    # TODO: add the sampling rate as an attribute for use with e.g. C2S.
-    fp.attrs['sample_rate'] = -1
-
     # Load file and extract application state.
     mat_data = loadmat(mat_path)
     app_vars = mat_data['appStateData']['mainAppVars']
+
+    # Sample rate (FPS) computed as 1 / time delta bw first two samples.
+    xscale = mat_data['appStateData']['xscale'][0][0][0]
+    fp.attrs['sample_rate'] = 1. / (xscale[1] - xscale[0])
 
     # Uniform bounding box radius used when labeling.
     radius = app_vars[0][0][0][0][2][0][0]
@@ -178,13 +179,13 @@ def preprocess(dataset_name, cpdir, dsdir):
             base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/Exported_Matlab_Data_200.mat',
             dsdir + '/sj.spikes.010617.hdf5'
         ),
-        # (
-        #     'sj.022616.01',
-        #     base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame*.tif',
-        #     lambda n: base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame%05d.tif' % n,
-        #     base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/Exported_Matlab_Data.mat',
-        #     dsdir + '/sj.spikes.022616.01.hdf5'
-        # ),
+        (
+            'sj.022616.01',
+            base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame*.tif',
+            lambda n: base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame%05d.tif' % n,
+            base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/Exported_Matlab_Data.mat',
+            dsdir + '/sj.spikes.022616.01.hdf5'
+        ),
         (
             'sj.022616.02',
             base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/frame*.tif',
@@ -192,13 +193,13 @@ def preprocess(dataset_name, cpdir, dsdir):
             base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/Exported_Matlab_Data.mat',
             dsdir + '/sj.spikes.022616.02.hdf5'
         ),
-        # (
-        #     'sj.022616.03',
-        #     base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame*.tif',
-        #     lambda n: base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame%05d.tif' % n,
-        #     base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/Exported_Matlab_Data.mat',
-        #     dsdir + '/sj.spikes.022616.03.hdf5'
-        # ),
+        (
+            'sj.022616.03',
+            base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame*.tif',
+            lambda n: base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame%05d.tif' % n,
+            base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/Exported_Matlab_Data.mat',
+            dsdir + '/sj.spikes.022616.03.hdf5'
+        ),
         (
             'sj.100716',
             '100716/TSeries-10072016-1007-003/512_pruned/frame*.tif',
@@ -244,16 +245,15 @@ def preprocess(dataset_name, cpdir, dsdir):
         spikes = fp.get('spikes')[:10]
         fig, axes = plt.subplots(10, 1, figsize=(30, 20))
         for i in range(len(axes)):
-            t = traces[i, :2000]
-            s = spikes[i, :2000]
-            axes[i].plot(t, 'k')
+            t, s = traces[i], spikes[i]
+            axes[i].plot(t, 'k', linewidth=0.7)
             xx, = np.where(s == 1.)
             axes[i].scatter(xx, t[xx], c='b', marker='o')
             axes[i].set_ylim(0,  1.2 * np.max(t))
         plt.suptitle('%s\n%d ROIs, %d images' %
                      (path, fp.get('traces').shape[0], fp.get('traces').shape[1]))
         plot_path = '%s/data-%s.png' % (cpdir, path.split('/')[-1])
-        plt.savefig(plot_path, dpi=90)
+        plt.savefig(plot_path, dpi=250)
         plt.close()
         logger.info('Saved dataset samples to %s' % plot_path)
 
@@ -265,7 +265,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     DSDIR = '%s/.deep-calcium-datasets/stjude' % os.path.expanduser('~')
-    CPDIR = 'checkpoints/traceseg'
+    CPDIR = 'checkpoints/sjspikes_unet1d'
 
     if not os.path.exists(DSDIR):
         os.mkdir(DSDIR)
