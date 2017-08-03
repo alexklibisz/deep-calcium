@@ -19,7 +19,8 @@ import pickle
 
 from deepcalcium.utils.runtime import funcname
 from deepcalcium.datasets.nf import nf_mask_metrics
-from deepcalcium.utils.keras_helpers import MetricsPlotCallback, F1, prec, reca, dice, dicesq, dice_loss, dicesq_loss, posyt, posyp, load_model_with_new_input_shape, weighted_binary_crossentropy
+from deepcalcium.utils.keras_helpers import MetricsPlotCallback, load_model_with_new_input_shape
+from deepcalcium.models.neurons.utils import F1, prec, reca, dice, dicesq, dice_loss, dicesq_loss, posyt, posyp, weighted_binary_crossentropy
 from deepcalcium.utils.visuals import mask_outlines
 from deepcalcium.utils.data_utils import INVERTIBLE_2D_AUGMENTATIONS
 

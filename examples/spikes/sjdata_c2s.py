@@ -1,4 +1,5 @@
 # Trace segmentation using C2S library.
+from __future__ import division, print_function
 import argparse
 import logging
 import numpy as np
@@ -11,13 +12,15 @@ from deepcalcium.models.spikes.c2s_segmentation import C2SSegmentation
 
 
 def training(dataset_name, model_path, cpdir, dsdir):
-    np.random.seed(int(os.getpid()))
+    # np.random.seed(int(os.getpid()))
+    np.random.seed(865)
     dataset_paths = preprocess(dataset_name, cpdir, dsdir)
     model = C2SSegmentation(cpdir)
     return model.fit(
         dataset_paths,
-        prop_trn=0.75,
-        prop_val=0.25,
+        model_path,
+        val_type='cross_validate',
+        folds=5,
         error_margin=2
     )
 

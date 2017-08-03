@@ -13,6 +13,7 @@ import os
 import sys
 sys.path.append('.')
 from deepcalcium.utils.runtime import funcname
+from deepcalcium.models.spikes.utils import plot_traces_spikes
 
 
 def sj_ROI_trace(tiff_paths, exist_mask, h, w, cyy, cxx, radius):
@@ -246,21 +247,12 @@ def preprocess(dataset_name, cpdir, dsdir, plots=False):
         if not plots:
             continue
         fp = h5py.File(path)
-        traces = fp.get('traces')[:10]
-        spikes = fp.get('spikes')[:10]
-        fig, axes = plt.subplots(10, 1, figsize=(30, 20))
-        for i in range(len(axes)):
-            t, s = traces[i], spikes[i]
-            axes[i].plot(t, 'k', linewidth=0.7)
-            xx, = np.where(s == 1.)
-            axes[i].scatter(xx, t[xx], c='b', marker='o')
-            axes[i].set_ylim(0,  1.2 * np.max(t))
-        plt.suptitle('%s\n%d ROIs, %d images' %
-                     (path, fp.get('traces').shape[0], fp.get('traces').shape[1]))
-        plot_path = '%s/data-%s.png' % (cpdir, path.split('/')[-1])
-        plt.savefig(plot_path, dpi=250)
-        plt.close()
-        logger.info('Saved dataset samples to %s' % plot_path)
+        t, s = fp.get('traces')[:10], fp.get('spikes')[:10]
+        save_path = '%s/data-%s.png' % (cpdir, path.split('/')[-1])
+        title = '%s\n%d ROIs, %d images' % (path, t.shape[0], t.shape[1])
+        plot_traces_spikes(traces=t, spikes_true=s, dpi=250,
+                           title=title, save_path=save_path)
+        logger.info('Saved dataset samples to %s' % save_path)
 
     return dataset_paths
 
@@ -284,4 +276,4 @@ if __name__ == "__main__":
     ap.add_argument('-d', '--dsdir', help='datasets directory', default=DSDIR)
     args = vars(ap.parse_args())
 
-    preprocess(args['dataset'], args['cpdir'], args['dsdir'])
+    preprocess(args['dataset'], args['cpdir'], args['dsdir'], plots=True)

@@ -1,11 +1,11 @@
 from __future__ import division, print_function
+from glob import glob
 from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, CSVLogger, ReduceLROnPlateau, EarlyStopping
 from keras.optimizers import Adam
 from keras.losses import binary_crossentropy
 from math import ceil
 from os import path, mkdir
-from scipy.misc import imsave
 from time import time
 import h5py
 import keras.backend as K
@@ -14,7 +14,8 @@ import numpy as np
 import os
 
 from deepcalcium.utils.runtime import funcname
-from deepcalcium.utils.keras_helpers import MetricsPlotCallback, F2, prec, reca
+from deepcalcium.utils.keras_helpers import MetricsPlotCallback
+from deepcalcium.models.spikes.utils import F2, prec, reca, maxpool1D, ytspks, ypspks, F2_margin, plot_traces_spikes
 
 rng = np.random
 
@@ -22,9 +23,8 @@ rng = np.random
 class _SamplePlotCallback(Callback):
     """Keras callback that plots sample predictions during training."""
 
-    def __init__(self, model, save_path, traces, spikes, nb_plot=30, title='Epoch {epoch:d} loss={loss:.3f}'):
+    def __init__(self, save_path, traces, spikes, nb_plot=30, title='Epoch {epoch:d} loss={loss:.3f}'):
 
-        self._model = model
         self.save_path = save_path
         self.traces = traces
         self.spikes = spikes
@@ -33,60 +33,14 @@ class _SamplePlotCallback(Callback):
 
     def on_epoch_end(self, epoch, logs):
 
-        # Get newest weights.
-        self._model.set_weights(self.model.get_weights())
-
-        import matplotlib
-        matplotlib.use('agg')
-        import matplotlib.pyplot as plt
-
-        spikes_pred = self._model.predict(self.traces[:self.nb_plot])
-
-        fig, axes = plt.subplots(self.nb_plot, 1, figsize=(12, self.nb_plot))
-        for i, ax in enumerate(axes):
-
-            # Plot signal.
-            t = self.traces[i]
-            ax.plot(t, c='k', linewidth=0.5)
-
-            # Scatter points for true spikes (blue circle).
-            xxt, = np.where(self.spikes[i] == 1)
-            ax.scatter(xxt, t[xxt], c='b', marker='o',
-                       alpha=0.5, label='True spike.')
-
-            # Scatter points for predicted spikes (red x).
-            xxp, = np.where(spikes_pred[i].round() == 1)
-            ax.scatter(xxp, t[xxp], c='r', marker='x',
-                       alpha=0.5, label='False positive.')
-
-            # Scatter points for correctly predicting spikes.
-            xxc = np.intersect1d(xxt, xxp)
-            ax.scatter(xxc, t[xxc], c='g', marker='x',
-                       alpha=1., label='True positive.')
-
-            if i == 0 or i == len(axes) - 1:
-                ax.legend()
-
-        plt.subplots_adjust(left=None, wspace=None, hspace=0.5, right=None)
-        plt.suptitle(self.title.format(epoch=epoch, **logs))
-        plt.savefig(self.save_path.format(epoch=epoch), dpi=60)
-        plt.close()
-
-
-class _ValidationMetricsCB(Callback):
-    """Keras callback that evaluates validation metrics on full-size predictions
-    during training."""
-
-    def __init__(self, model_val, batch_gen, steps):
-        self.model_val = model_val
-        self.batch_gen = batch_gen
-        self.steps = steps
-
-    def on_epoch_end(self, epoch, logs={}):
-        self.model_val.set_weights(self.model.get_weights())
-        metrics = self.model_val.evaluate_generator(self.batch_gen, self.steps)
-        for name, metric in zip(self.model_val.metrics_names, metrics):
-            logs['val_%s' % name] = metric
+        # Get newest weights, predict, plot.
+        spikes_pred = self.model.predict(self.traces[:self.nb_plot])
+        plot_traces_spikes(traces=self.traces[:self.nb_plot],
+                           spikes_true=self.spikes[:self.nb_plot],
+                           spikes_pred=spikes_pred[:self.nb_plot],
+                           title=self.title.format(epoch=epoch, **logs),
+                           save_path=self.save_path.format(epoch=epoch),
+                           dpi=120)
 
 
 def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.15):
@@ -182,14 +136,6 @@ def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal'
     return model
 
 
-def maxpool1D(x, pool_size, pool_strides, padding='same'):
-    """1D pooling along the rows of a 2D array. Requires reshaping to work
-    with the keras pool2d function."""
-    x = K.expand_dims(K.expand_dims(x, axis=0), axis=-1)
-    x = K.pool2d(x, (1, pool_size), (1, pool_strides), padding=padding)
-    return x[0, :, :, 0]
-
-
 def weighted_binary_crossentropy(yt, yp, margin=1, weightpos=2., weightneg=1.):
     """Apply different weights to true positives and true negatives with
     binary crossentropy loss. Allow an error margin to prevent penalizing
@@ -213,21 +159,6 @@ def weighted_binary_crossentropy(yt, yp, margin=1, weightpos=2., weightneg=1.):
     losspos = yt * K.log(yp + 1e-7)
     lossneg = (1 - yt) * K.log(1 - yp + 1e-7)
     return -1 * ((weightpos * losspos) + (weightneg * lossneg))
-
-
-def F2_margin(yt, yp, margin=1):
-    L, S = 2 * margin + 1, 1
-    return F2(maxpool1D(yt, L, S), maxpool1D(yp, L, S))
-
-
-def ytspks(yt, yp):
-    """On average, how many spikes in each yt spikes sample."""
-    return K.sum(yt, axis=1)
-
-
-def ypspks(yt, yp):
-    """On average, how many spikes in each yp spikes prediction."""
-    return K.sum(K.round(yp), axis=1)
 
 
 def _dataset_attrs_func(dspath):
@@ -286,37 +217,31 @@ class UNet1DSegmentation(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(self, dataset_paths, model_path=None,
-            shape_trn=(4096,), shape_val=(4096,), error_margin=1.,
-            batch_trn=32, batch_val=32,
-            val_type='leave_one_out', val_index=-1, prop_trn=0.8, prop_val=0.2,
-            epochs=20, keras_callbacks=[], optimizer=Adam(0.002)):
+    def fit(self, dataset_paths, model_path=None, shape=(4096,), error_margin=1.,
+            batch=20, nb_epochs=20, val_type='random_split', prop_trn=0.8,
+            prop_val=0.2, nb_folds=5, keras_callbacks=[], optimizer=Adam(0.002)):
         """Constructs model based on parameters and trains with the given data.
+        Internally, the function uses a local function to abstract the training
+        for both validation types.
 
         # Arguments
             dataset_paths: list of paths to HDF5 datasets used for training.
             model_path: filesystem path to serialized model that should be
                 loaded into the network.
-            shape_trn: 1D tuple defining the training input length.
-            shape_val: 1D tuple defining the validation input length.
+            shape: tuple defining the input length.
             error_margin: number of frames within which a false positive error
                 is allowed. e.g. error_margin=1 would allow off-by-1 errors.
-            val_type: string defining the train/validation split strategy.
-                Either 'leave_one_out' or 'random_split'.
-            val_index: if the val_type is 'leave_one_out', this index in the
-                dataset_paths list is used for validation.
-            prop_trn: if the val_type is 'random_split', this proportion of all
-                calcium traces is used for training.
-            prop_val: if the val_type is 'random_split', this proportion of all
-                calcium traces is used for validation.
+            batch: batch size.
+            val_type: either 'random_split' or 'cross_validate'.
+            prop_trn: proportion of data for training when using random_split.
+            prop_val: proportion of data for validation when using random_split.
+            nb_folds: number of folds for K-fold cross valdiation using using
+                cross_validate.
             keras_callbacks: additional callbacks that should be included.
-            epochs: number of epochs. 1 epoch indicates 1 sample taken from every
-                training trace.
+            nb_epochs: how many epochs. 1 epoch includes 1 sample of every trace.
             optimizer: instantiated keras optimizer.
-            loss: loss function, either string or an actual keras-compatible
-                loss function.
 
-        # Returns:
+        # Returns
             history: the keras training history as a dictionary of metrics and
                 their values after each epoch.
             model_path: path to the HDF5 file where the best architecture and
@@ -324,115 +249,154 @@ class UNet1DSegmentation(object):
 
         """
 
+        def _fit_single(idxs_trn, idxs_val, model_summary=False):
+            """Instantiates model, splits data based on given indices, trains.
+            Abstracted in order to enable both random split and cross-validation.
+
+            # Returns
+                metrics_trn: dictionary of {name: metric} for training data.
+                metrics_val: dictionary of {name: metric} for validation data.
+                best_model_path: filesystem path to the best serialized model.
+            """
+
+            # Define metrics and loss based on error margin.
+            def F2M(yt, yp, margin=error_margin):
+                return F2_margin(yt, yp, margin)
+
+            def loss(yt, yp, margin=error_margin):
+                return weighted_binary_crossentropy(yt, yp, margin)
+
+            metrics = [F2, prec, reca, F2M, ytspks, ypspks]
+            custom_objects = {o.__name__: o for o in metrics + [loss]}
+
+            # Load network from disk.
+            if model_path:
+                model = load_model_with_new_input_shape(
+                    model_path, shape, compile=True, custom_objects=custom_objects)
+
+            # Define, compile network.
+            else:
+                model = self.net_builder_func(shape)
+                model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+                if model_summary:
+                    model.summary()
+
+            # Split traces and spikes.
+            tr_trn = [traces[i] for i in idxs_trn]
+            sp_trn = [spikes[i] for i in idxs_trn]
+            tr_val = [traces[i] for i in idxs_val]
+            sp_val = [spikes[i] for i in idxs_val]
+
+            # 1 epoch = 1 training sample from every trace.
+            steps_trn = int(ceil(len(tr_trn) / batch))
+
+            # Training and validation generators.
+            bg = self._batch_gen
+            gen_trn = bg(tr_trn, sp_trn, shape, batch, steps_trn)
+            gen_val = bg(tr_val, sp_val, shape, len(tr_val) * 2, 1)
+            x_val, y_val = next(gen_val)
+
+            # Callbacks.
+            cpt, spc = (self.cpdir, int(time())), _SamplePlotCallback
+            cb = [
+                spc('%s/%d_samples_{epoch:03d}_trn.png' % cpt, *next(gen_trn),
+                    title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
+                spc('%s/%d_samples_{epoch:03d}_val.png' % cpt, x_val, y_val,
+                    title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
+                ModelCheckpoint('%s/%d_model_val_F2M_{val_F2M:3f}_{epoch:03d}.hdf5' % cpt,
+                                monitor='val_F2M', mode='max', verbose=1, save_best_only=True),
+                CSVLogger('%s/%d_metrics.csv' % cpt),
+                MetricsPlotCallback('%s/%d_metrics.png' % cpt)
+            ]
+
+            # Train.
+            model.fit_generator(gen_trn, steps_per_epoch=steps_trn,
+                                epochs=nb_epochs, callbacks=cb,
+                                validation_data=(x_val, y_val), verbose=1)
+
+            # Identify best serialized model, assuming newest is best.
+            model_path_glob = '%s/%d_model*hdf5' % cpt
+            model_paths = sorted(glob(model_path_glob), key=os.path.getmtime)
+            best_model_path = model_paths[-1]
+
+            # Training and validation metrics on trained model.
+            model.load_weights(best_model_path)
+            mt = model.evaluate_generator(gen_trn, steps_trn)
+            mt = {n: m for n, m in zip(model.metrics_names, mt)}
+            mv = model.evaluate(x_val, y_val)
+            mv = {n: m for n, m in zip(model.metrics_names, mv)}
+
+            return mt, mv, best_model_path
+            # END OF INTERNAL FUNCTION.
+
+        logger = logging.getLogger(funcname())
+
         # Error check.
-        assert len(shape_trn) == 1
-        assert len(shape_val) == 1
-        assert val_type in {'leave_one_out', 'random_split'}
-
-        # Define metrics and loss based on error margin.
-        def F2M(yt, yp, margin=error_margin):
-            return F2_margin(yt, yp, margin)
-
-        def loss(yt, yp, margin=error_margin):
-            return weighted_binary_crossentropy(yt, yp, margin)
-
-        metrics = [F2, prec, reca, F2M, ytspks, ypspks]
-        custom_objects = {o.__name__: o for o in metrics + [loss]}
-
-        # Load network from disk.
-        if model_path:
-            lmwnis = load_model_with_new_input_shape
-            model = lmwnis(model_path, shape_trn, compile=True,
-                           custom_objects=custom_objects)
-            model_val = lmwnis(model_path, shape_val, compile=True,
-                               custom_objects=custom_objects)
-
-        # Define, compile network.
-        else:
-            model = self.net_builder_func(shape_trn)
-            model.summary()
-            model_val = self.net_builder_func(shape_val)
-            model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
-            model_val.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+        assert len(shape) == 1
+        assert val_type in ['random_split', 'cross_validate']
+        assert nb_folds > 1
+        assert prop_trn + prop_val == 1.
 
         # Extract traces and spikes from datasets.
-        traces = [self.dataset_traces_func(p) for p in dataset_paths]
-        spikes = [self.dataset_spikes_func(p) for p in dataset_paths]
-        for p, t, s in zip(dataset_paths, traces, spikes):
-            assert t.shape == s.shape, "Bad shapes: %s" % p
+        traces = [t for p in dataset_paths for t in self.dataset_traces_func(p)]
+        spikes = [s for p in dataset_paths for s in self.dataset_spikes_func(p)]
+        assert len(traces) == len(spikes)
 
-        # Training/validation split.
+        # Random-split training.
         if val_type == 'random_split':
-            idxs = [list(range(x.shape[0])) for x in traces]
-            idxs_trn = [rng.choice(ix, int(len(ix) * prop_trn), replace=False)
-                        for ix in idxs]
-            idxs_val = [sorted(list(set(ix) - set(ixt)))
-                        for ix, ixt in zip(idxs, idxs_trn)]
-            traces_trn = [traces[i][ix, :] for i, ix in enumerate(idxs_trn)]
-            spikes_trn = [spikes[i][ix, :] for i, ix in enumerate(idxs_trn)]
-            traces_val = [traces[i][ix, :] for i, ix in enumerate(idxs_val)]
-            spikes_val = [spikes[i][ix, :] for i, ix in enumerate(idxs_val)]
-        # elif val_type == 'leave_one_out':
-        #     idxs_trn = [i for i in range(len(traces)) if i != val_index]
-        #     idxs_val = [i for i in range(len(traces)) if i == val_index]
-        #     traces_trn = [traces[i] for i in idxs_trn]
-        #     spikes_trn = [spikes[i] for i in idxs_trn]
-        #     traces_val = [traces[i] for i in idxs_val]
-        #     spikes_val = [spikes[i] for i in idxs_val]
 
-        # 1 epoch = 1 sample from every trace.
-        def steps(tr, b):
-            return int(sum([len(t) for t in tr]) / b)
-        steps_trn = steps(traces_trn, batch_trn)
-        steps_val = steps(traces_val, batch_val)
+            idxs = rng.choice(np.arange(len(traces)), len(traces), replace=0)
+            idxs_trn = idxs[:int(len(idxs) * prop_trn)]
+            idxs_val = idxs[-1 * int(len(idxs) * prop_val):]
+            mt, mv, _ = _fit_single(idxs_trn, idxs_val, True)
+            for k in sorted(mt.keys()):
+                s = (k, mt[k], mv[k])
+                logger.info('%-20s trn=%-9.4lf val=%-9.4lf' % s)
 
-        # Training and validation generators.
-        bg = self._batch_gen
-        gen_trn = bg(traces_trn, spikes_trn, shape_trn, batch_trn, steps_trn, 0)
-        gen_val = bg(traces_val, spikes_val, shape_val, batch_val, steps_val, 1)
+        # Cross-validation training.
+        elif val_type == 'cross_validate':
 
-        # Callbacks.
-        cpt = (self.cpdir, int(time()))
-        spc = _SamplePlotCallback
-        cb = [
-            _ValidationMetricsCB(model_val, gen_val, steps_val),
-            spc(model, '%s/%d_samples_{epoch:03d}_trn.png' % cpt, *next(gen_trn),
-                title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
-            spc(model_val, '%s/%d_samples_{epoch:03d}_val.png' % cpt,
-                *next(gen_val), title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
-            ModelCheckpoint('%s/%d_model_val_F2M_{val_F2M:3f}_{epoch:d}.hdf5' % cpt,
-                            monitor='val_F2M', mode='max', verbose=1, save_best_only=True),
-            CSVLogger('%s/%d_metrics.csv' % cpt),
-            MetricsPlotCallback('%s/%d_metrics.png' % cpt)
-        ]
+            # Randomly-ordered indicies for cross-validation.
+            idxs = rng.choice(np.arange(len(traces)), len(traces), replace=0)
+            fsz = int(len(idxs) / nb_folds)
+            fold_idxs = [idxs[fsz * n:fsz * n + fsz] for n in range(nb_folds)]
 
-        # Train.
-        trained = model.fit_generator(gen_trn, steps_per_epoch=steps_trn,
-                                      epochs=epochs, callbacks=cb, verbose=1)
+            # Train on folds.
+            metrics_trn, metrics_val = [], []
+            for val_idx in range(nb_folds):
 
-        # Summary of metrics.
-        logger = logging.getLogger(funcname())
-        for k in sorted(trained.history.keys(), key=lambda k: k.replace('val_', '')):
-            v = trained.history[k]
-            logger.info('%-20s %10.4lf (%d) %10.4lf (%d) %10.4lf (%d)' %
-                        (k, v[-1], len(v), np.min(v), np.argmin(v), np.max(v), np.argmax(v)))
+                # Seperate training and validation indexes.
+                idxs_trn = [idx for i, fold in enumerate(fold_idxs)
+                            if i != val_idx for idx in fold]
+                idxs_val = [idx for i, fold in enumerate(fold_idxs)
+                            if i == val_idx for idx in fold]
+                assert set(idxs_trn).intersection(idxs_val) == set([])
 
-        # Return history and best model path.
-        return trained.history, '%s/model_val_nf_f1_mean.hdf5' % self.cpdir
+                # Train and report metrics.
+                logger.info('\nCross validation fold = %d' % val_idx)
+                mt, mv, _ = _fit_single(idxs_trn, idxs_val, val_idx == 0)
+                metrics_trn.append(mt)
+                metrics_val.append(mv)
 
-    def _batch_gen(self, traces, spikes, shape, batch_size, nb_steps, reseed=False):
+                for k in sorted(mt.keys()):
+                    s = (k, mt[k], mv[k])
+                    logger.info('%-20s trn=%-10.4lf val=%-10.4lf' % s)
 
-        def shuffle(x):
-            return _rng.choice(x, len(x), replace=False)
+            # Aggregate metrics.
+            logger.info('\nCross validation summary')
+            for k in sorted(metrics_trn[0].keys()):
+                vals_trn = [m[k] for m in metrics_trn]
+                vals_val = [m[k] for m in metrics_val]
+                s = (k, np.mean(vals_trn), np.std(vals_trn),
+                     np.mean(vals_val), np.std(vals_val))
+                logger.info('%-20s trn=%-9.4lf (%.4lf) val=%-9.4lf (%.4lf)' % s)
 
-        localseed = rng.randint(0, 10**3)
-        _rng = np.random.RandomState(localseed)
+    def _batch_gen(self, traces, spikes, shape, batch_size, nb_steps):
 
         while True:
 
-            _rng = np.random.RandomState(localseed) if reseed else _rng
-            didxs = cycle(shuffle(np.arange(len(traces))))
-            sidxs = [cycle(shuffle(np.arange(len(s)))) for s in spikes]
+            idxs = np.arange(len(traces))
+            cidxs = cycle(rng.choice(idxs, len(idxs), replace=False))
 
             for _ in range(nb_steps):
 
@@ -443,16 +407,15 @@ class UNet1DSegmentation(object):
                 for bidx in range(batch_size):
 
                     # Dataset and sample indices.
-                    didx = next(didxs)
-                    sidx = next(sidxs[didx])
+                    idx = next(cidxs)
 
                     # Pick start and end point around positive spike index.
-                    x0 = _rng.randint(0, len(spikes[didx][sidx]) - shape[0])
+                    x0 = rng.randint(0, len(spikes[idx]) - shape[0])
                     x1 = x0 + shape[0]
 
                     # Populate batch.
-                    tb[bidx] = traces[didx][sidx][x0:x1]
-                    sb[bidx] = spikes[didx][sidx][x0:x1]
+                    tb[bidx] = traces[idx][x0:x1]
+                    sb[bidx] = spikes[idx][x0:x1]
 
                 yield tb, sb
 
