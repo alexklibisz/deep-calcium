@@ -140,7 +140,7 @@ def make_stjude_dataset(name, tiff_glob, n_to_path, mat_path, dataset_path, trac
 
     # Populate the trace and spike vectors.
     nb_rois = len(roi_to_spks)
-    nb_imgs = max([max(l if len(l) else [-1]) for l in roi_to_spks])
+    nb_imgs = len(xscale)
     paths = [n_to_path(n) for n in range(1, nb_imgs + 1)]
     exist = np.array([int(os.path.exists(p)) for p in paths])
     h, w = imread([paths[i] for i in range(nb_imgs) if exist[i]][0]).shape
@@ -276,4 +276,4 @@ if __name__ == "__main__":
     ap.add_argument('-d', '--dsdir', help='datasets directory', default=DSDIR)
     args = vars(ap.parse_args())
 
-    preprocess(args['dataset'], args['cpdir'], args['dsdir'], plots=True)
+    preprocess(args['dataset'], args['cpdir'], args['dsdir'], plots=False)
