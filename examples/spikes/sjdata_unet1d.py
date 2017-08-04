@@ -27,7 +27,7 @@ def training(dataset_name, model_path, cpdir, dsdir):
         val_type='random_split',
         prop_trn=0.8,
         prop_val=0.2,
-        nb_epochs=75,
+        nb_epochs=100,
         error_margin=2
     )
 
@@ -40,7 +40,7 @@ def crossval(dataset_name, model_path, cpdir, dsdir):
         model_path=model_path,
         val_type='cross_validate',
         nb_folds=5,
-        nb_epochs=75,
+        nb_epochs=100,
         error_margin=2
     )
 

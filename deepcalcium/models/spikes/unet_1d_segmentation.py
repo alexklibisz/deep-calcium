@@ -14,7 +14,7 @@ import numpy as np
 import os
 
 from deepcalcium.utils.runtime import funcname
-from deepcalcium.utils.keras_helpers import MetricsPlotCallback
+from deepcalcium.utils.keras_helpers import MetricsPlotCallback, load_model_with_new_input_shape
 from deepcalcium.models.spikes.utils import F2, prec, reca, maxpool1D, ytspks, ypspks, F2_margin, prec_margin, reca_margin, plot_traces_spikes
 
 rng = np.random
@@ -162,7 +162,10 @@ def weighted_binary_crossentropy(yt, yp, margin=1, weightpos=2., weightneg=1.):
 
 
 def _dataset_attrs_func(dspath):
-    return
+    fp = h5py.File(dspath)
+    attrs = {k: v for k, v in fp.attrs.iteritems()}
+    fp.close()
+    return attrs
 
 
 def _dataset_traces_func(dspath):
@@ -252,6 +255,7 @@ class UNet1DSegmentation(object):
         def _fit_single(idxs_trn, idxs_val, model_summary=False):
             """Instantiates model, splits data based on given indices, trains.
             Abstracted in order to enable both random split and cross-validation.
+            TODO: abstract this in such a way that allows parallelizing.
 
             # Returns
                 metrics_trn: dictionary of {name: metric} for training data.
@@ -354,10 +358,11 @@ class UNet1DSegmentation(object):
             idxs = rng.choice(np.arange(len(traces)), len(traces), replace=0)
             idxs_trn = idxs[:int(len(idxs) * prop_trn)]
             idxs_val = idxs[-1 * int(len(idxs) * prop_val):]
-            mt, mv, _ = _fit_single(idxs_trn, idxs_val, True)
+            mt, mv, bmp = _fit_single(idxs_trn, idxs_val, True)
             for k in sorted(mt.keys()):
                 s = (k, mt[k], mv[k])
                 logger.info('%-20s trn=%-9.4lf val=%-9.4lf' % s)
+            logger.info('Best model path: %s' % bmp)
 
         # Cross-validation training.
         elif val_type == 'cross_validate':
@@ -425,5 +430,20 @@ class UNet1DSegmentation(object):
 
                 yield tb, sb
 
-    def predict(self, dataset_paths, model_path, sample_shape=(128,), print_scores=True, save=True):
-        pass
+    def predict(self, dataset_paths, model_path, batch=32):
+
+        spikes_pred_all = []
+        names_all = []
+
+        for p in dataset_paths:
+            attrs = self.dataset_attrs_func(p)
+            names_all.append(attrs['name'])
+            traces = self.dataset_traces_func(p)
+            spikes = self.dataset_spikes_func(p)
+            input_shape = (traces.shape[1],)
+            model = load_model_with_new_input_shape(
+                model_path, input_shape=input_shape, compile=False)
+            spikes_pred = model.predict(traces, batch_size=batch)
+            spikes_pred_all.append(spikes_pred)
+
+        return spikes_pred_all, names_all

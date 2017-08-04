@@ -1,4 +1,6 @@
-from skimage.color import gray2rgb
+from __future__ import division
+from scipy.misc import imsave
+from skimage.color import gray2rgb, rgb2gray
 from skvideo.io import vwrite
 from regional import one
 import numpy as np
@@ -68,22 +70,29 @@ def mask_outlines(img, mask_arrs=[], colors=[]):
     # Clip outliners, scale the img to [0,1].
     img = np.clip(img, 0, np.percentile(img, 99))
     img = (img - np.min(img)) / (np.max(img) - np.min(img))
-    clr_intensity = 1
 
     # Convert the img to RGB.
     if len(img.shape) == 2:
-        img = gray2rgb(img)
+        img_rgb = gray2rgb(img)
 
-    # Convert each mask into a region, then take the outlined mask
-    # of that region and add it to the img.
+    # Build up an image of combined outlines.
+    oln_rgb = np.zeros_like(img_rgb)
     for m, c in zip(mask_arrs, colors):
         if np.sum(m) == 0:
             continue
-        reg = one(list(zip(*np.where(m == 1))))
-        oln = reg.mask(dims=img.shape[:2], fill=None,
-                       stroke=c, background='black')
-        oln /= np.max(oln)
-        yy, xx, cc = np.where(oln != 0)
-        img[yy, xx, cc] = oln[yy, xx, cc] * clr_intensity
+        r = one(list(zip(*np.where(m == 1))))
+        o = r.mask(dims=img_rgb.shape[:2], fill=None,
+                   stroke=c, background='black')
+        yy, xx, cc = np.where(o != 0)
+        oln_rgb[yy, xx, cc] = o[yy, xx, cc]
 
-    return img
+    # Merge the two images.
+    # Helpful stackoverflow post: https://stackoverflow.com/questions/40895785
+    oln_rgb = np.clip(oln_rgb, 0, 1)
+    oln_msk = np.max(oln_rgb, axis=-1)
+    img_msk = 1 - oln_msk
+    oln_msk = gray2rgb(oln_msk)
+    img_msk = gray2rgb(img_msk)
+    mrg = (((oln_rgb * oln_msk) + (img_rgb * img_msk)) * 255).astype(np.uint8)
+
+    return mrg

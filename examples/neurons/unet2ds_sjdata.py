@@ -192,8 +192,8 @@ if __name__ == "__main__":
 
     # Model setup and predictions.
     model = UNet2DSummary(cpdir=cpdir)
-    Mp, names = model.predict(ds_paths, model_path,
-                              window_shape=(512, 512), save=True)
+    Mp, names = model.predict(ds_paths, model_path, window_shape=(512, 512),
+                              print_scores=True, save=True)
 
     # Print name, shape, path to saved image for each dataset.
     for name, mp, path in zip(names, Mp, sorted(glob('%s/*.png' % cpdir))):

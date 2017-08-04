@@ -618,6 +618,3 @@ class UNet2DSummary(object):
                         (mean_prec, mean_reca, mean_comb))
 
         return Mp, names
-
-    def wtfpep8(self, args, should, be, spaced):
-        pass

@@ -61,7 +61,7 @@ def ypspks(yt, yp):
     return K.sum(K.round(yp), axis=1)
 
 
-def plot_traces_spikes(traces, spikes_true, spikes_pred=None, title='Traces and spikes', save_path=None, dpi=100):
+def plot_traces_spikes(traces, spikes_true, spikes_pred=None, title=None, save_path=None, dpi=100, fig_width=20, legend=True):
 
     if save_path:
         import matplotlib
@@ -69,38 +69,41 @@ def plot_traces_spikes(traces, spikes_true, spikes_pred=None, title='Traces and 
 
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(traces.shape[0], 1, figsize=(20, traces.shape[0]))
+    figsize = (fig_width, traces.shape[0] * 1.7)
+    fig, axes = plt.subplots(traces.shape[0], 1, figsize=figsize)
+    axes = axes if traces.shape[0] > 1 else [axes]
     for i, ax in enumerate(axes):
 
         # Plot signal.
         t = traces[i]
-        ax.plot(t, c='k', linewidth=0.5)
+        ax.plot(t, c='k', linewidth=0.9)
 
         # Scatter points for true spikes (blue circle).
         xxt, = np.where(spikes_true[i] == 1)
         ax.scatter(xxt, t[xxt], c='b', marker='o',
-                   alpha=0.5, label='True spike.')
+                   alpha=0.5, label='Ground-truth spike')
 
         if type(spikes_pred) == np.ndarray:
 
             # Scatter points for predicted spikes (red x).
             xxp, = np.where(spikes_pred[i].round() == 1)
-            ax.scatter(xxp, t[xxp], c='r', marker='x',
-                       alpha=0.5, label='False positive.')
+            ax.scatter(xxp, t[xxp], c='#754A7E', marker='x',
+                       alpha=1., label='Predicted spike')
 
             # Scatter points for correctly predicting spikes.
             xxc = np.intersect1d(xxt, xxp)
-            ax.scatter(xxc, t[xxc], c='g', marker='x',
-                       alpha=1., label='True positive.')
+            ax.scatter(xxc, t[xxc], c='#FF8200', marker='x',
+                       alpha=1., label='Exact prediction')
 
-        if i == 0 or i == len(axes) - 1:
-            ax.legend()
+        if (i == 0 or i == len(axes) - 1) and legend:
+            ax.legend(loc='lower left', ncol=3)
 
-    plt.subplots_adjust(left=None, wspace=None, hspace=0.5, right=None)
-    plt.suptitle(title)
+    plt.subplots_adjust(left=None, wspace=None, hspace=0.7, right=None)
+    if title:
+        plt.suptitle(title)
 
     if save_path:
-        plt.savefig(save_path, dpi=dpi)
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight', pad_inches=0)
         plt.close()
     else:
         plt.show()

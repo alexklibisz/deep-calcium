@@ -103,3 +103,4 @@ ENV/
 # deep-calcium
 checkpoints
 data
+*_results.txt
