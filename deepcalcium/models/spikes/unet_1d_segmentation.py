@@ -15,7 +15,7 @@ import os
 
 from deepcalcium.utils.runtime import funcname
 from deepcalcium.utils.keras_helpers import MetricsPlotCallback
-from deepcalcium.models.spikes.utils import F2, prec, reca, maxpool1D, ytspks, ypspks, F2_margin, plot_traces_spikes
+from deepcalcium.models.spikes.utils import F2, prec, reca, maxpool1D, ytspks, ypspks, F2_margin, prec_margin, reca_margin, plot_traces_spikes
 
 rng = np.random
 
@@ -263,10 +263,16 @@ class UNet1DSegmentation(object):
             def F2M(yt, yp, margin=error_margin):
                 return F2_margin(yt, yp, margin)
 
+            def precM(yt, yp, margin=error_margin):
+                return prec_margin(yt, yp, margin)
+
+            def recaM(yt, yp, margin=error_margin):
+                return reca_margin(yt, yp, margin)
+
             def loss(yt, yp, margin=error_margin):
                 return weighted_binary_crossentropy(yt, yp, margin)
 
-            metrics = [F2, prec, reca, F2M, ytspks, ypspks]
+            metrics = [F2, prec, reca, F2M, precM, recaM, ytspks, ypspks]
             custom_objects = {o.__name__: o for o in metrics + [loss]}
 
             # Load network from disk.
