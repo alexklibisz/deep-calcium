@@ -527,7 +527,7 @@ class UNet2DSummary(object):
             yield s_batch, m_batch
 
     def predict(self, dataset_paths, model_path, window_shape=(512, 512), print_scores=False,
-                save=False, augmentation=False):
+                save=False, augmentation=False, threshold=0.5):
         """Make predictions on the given dataset_paths. Currently uses batches of 1.
 
         Arguments:
@@ -588,6 +588,8 @@ class UNet2DSummary(object):
             else:
                 mp = model.predict(s_batch)[0, :hs, :ws]
 
+            # Round about the given threshold and store prediction, name
+            mp = (mp > threshold).astype(np.uint8)
             Mp.append(mp)
             names.append(name)
 

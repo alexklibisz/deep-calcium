@@ -61,7 +61,7 @@ def ypspks(yt, yp):
     return K.sum(K.round(yp), axis=1)
 
 
-def plot_traces_spikes(traces, spikes_true, spikes_pred=None, title=None, save_path=None, dpi=100, fig_width=20, legend=True):
+def plot_traces_spikes(traces, spikes_true=None, spikes_pred=None, title=None, save_path=None, dpi=100, fig_width=20, legend=True):
 
     if save_path:
         import matplotlib
@@ -79,18 +79,19 @@ def plot_traces_spikes(traces, spikes_true, spikes_pred=None, title=None, save_p
         ax.plot(t, c='k', linewidth=0.9)
 
         # Scatter points for true spikes (blue circle).
-        xxt, = np.where(spikes_true[i] == 1)
-        ax.scatter(xxt, t[xxt], c='b', marker='o',
-                   alpha=0.5, label='Ground-truth spike')
+        if type(spikes_true) == np.ndarray:
+            xxt, = np.where(spikes_true[i] == 1)
+            ax.scatter(xxt, t[xxt], c='b', marker='o',
+                       alpha=0.5, label='Ground-truth spike')
 
+        # Scatter points for predicted spikes (red x).
         if type(spikes_pred) == np.ndarray:
-
-            # Scatter points for predicted spikes (red x).
             xxp, = np.where(spikes_pred[i].round() == 1)
             ax.scatter(xxp, t[xxp], c='#754A7E', marker='x',
                        alpha=1., label='Predicted spike')
 
-            # Scatter points for correctly predicting spikes.
+        # Scatter points for correctly predicting spikes.
+        if type(spikes_true) == np.ndarray and type(spikes_pred) == np.ndarray:
             xxc = np.intersect1d(xxt, xxp)
             ax.scatter(xxc, t[xxc], c='#FF8200', marker='x',
                        alpha=1., label='Exact prediction')

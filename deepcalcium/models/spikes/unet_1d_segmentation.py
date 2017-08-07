@@ -430,7 +430,7 @@ class UNet1DSegmentation(object):
 
                 yield tb, sb
 
-    def predict(self, dataset_paths, model_path, batch=32):
+    def predict(self, dataset_paths, model_path, batch=32, threshold=0.5):
 
         spikes_pred_all = []
         names_all = []
@@ -444,6 +444,7 @@ class UNet1DSegmentation(object):
             model = load_model_with_new_input_shape(
                 model_path, input_shape=input_shape, compile=False)
             spikes_pred = model.predict(traces, batch_size=batch)
-            spikes_pred_all.append(spikes_pred.round())
+            spikes_pred = (spikes_pred > threshold).astype(np.uint8)
+            spikes_pred_all.append(spikes_pred)
 
         return spikes_pred_all, names_all
