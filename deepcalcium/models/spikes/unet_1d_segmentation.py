@@ -444,6 +444,6 @@ class UNet1DSegmentation(object):
             model = load_model_with_new_input_shape(
                 model_path, input_shape=input_shape, compile=False)
             spikes_pred = model.predict(traces, batch_size=batch)
-            spikes_pred_all.append(spikes_pred)
+            spikes_pred_all.append(spikes_pred.round())
 
         return spikes_pred_all, names_all
