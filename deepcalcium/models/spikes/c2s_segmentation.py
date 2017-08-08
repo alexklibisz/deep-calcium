@@ -11,7 +11,7 @@ import pickle as pkl
 import sys
 sys.path.append('.')
 from deepcalcium.utils.runtime import funcname
-from deepcalcium.models.spikes.utils import np2k, F2_margin, prec_margin, reca_margin
+from deepcalcium.utils.spikes import np2k, F2_margin, prec_margin, reca_margin
 
 rng = np.random
 os.environ['CUDA_VISIBLE_DEVICES'] = ""

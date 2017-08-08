@@ -7,7 +7,7 @@ import sys
 sys.path.append('.')
 
 from deepcalcium.datasets.nf import nf_load_hdf5
-from deepcalcium.utils.visuals import dataset_to_mp4
+from deepcalcium.utils.neurons import dataset_to_mp4
 
 logging.basicConfig(level=logging.INFO)
 

@@ -15,7 +15,7 @@ import os
 
 from deepcalcium.utils.runtime import funcname
 from deepcalcium.utils.keras_helpers import MetricsPlotCallback, load_model_with_new_input_shape
-from deepcalcium.models.spikes.utils import F2, prec, reca, maxpool1D, ytspks, ypspks, F2_margin, prec_margin, reca_margin, plot_traces_spikes
+from deepcalcium.utils.spikes import F2, prec, reca, ytspks, ypspks, weighted_binary_crossentropy, plot_traces_spikes
 
 rng = np.random
 
@@ -43,7 +43,7 @@ class _SamplePlotCallback(Callback):
                            dpi=120)
 
 
-def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.15):
+def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.0, margin=2):
     """Builds and returns the UNet architecture using Keras.
     # Arguments
         window_shape: tuple of one integer defining the input/output window shape.
@@ -128,6 +128,9 @@ def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal'
     x = concatenate([x, dc_0_out], axis=-1)
     x = conv_layer(nfb, x)
     x = conv_layer(nfb, x)
+
+    # Apply the error margin before softmax activation.
+    x = MaxPooling1D(margin + 1, strides=1, padding='same')(x)
     x = Conv1D(2, 1, activation='softmax')(x)
 
     x = Lambda(lambda x: x[:, :, -1])(x)
@@ -136,39 +139,14 @@ def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal'
     return model
 
 
-def weighted_binary_crossentropy(yt, yp, margin=1, weightpos=2., weightneg=1.):
-    """Apply different weights to true positives and true negatives with
-    binary crossentropy loss. Allow an error margin to prevent penalizing
-    for off-by-N errors.
-
-    # Arguments
-        yt, yp: Keras ground-truth and predicted batch matrices.
-        margin: number of time-steps within which an error is tolerated. e.g.
-            margin = 1 would allow off-by-1 errors. This is implemented by
-            max-pooling the ground-truth and predicted matrices.
-        weightpos: weight multiplier for loss on true-positives.
-        weightnet: weight multiplier for loss on true-negatives.
-
-    # Returns
-        matrix of loss scalars with shape (batch size x 1).
-
-    """
-
-    L, S = 2 * margin + 1, 1  # pooling length and stride.
-    yt, yp = maxpool1D(yt, L, S), maxpool1D(yp, L, S)
-    losspos = yt * K.log(yp + 1e-7)
-    lossneg = (1 - yt) * K.log(1 - yp + 1e-7)
-    return -1 * ((weightpos * losspos) + (weightneg * lossneg))
-
-
-def _dataset_attrs_func(dspath):
+def get_dataset_attrs(dspath):
     fp = h5py.File(dspath)
     attrs = {k: v for k, v in fp.attrs.iteritems()}
     fp.close()
     return attrs
 
 
-def _dataset_traces_func(dspath):
+def get_dataset_traces(dspath):
     fp = h5py.File(dspath)
     traces = fp.get('traces')[...]
     fp.close()
@@ -180,7 +158,7 @@ def _dataset_traces_func(dspath):
     return traces
 
 
-def _dataset_spikes_func(dspath):
+def get_dataset_spikes(dspath):
     fp = h5py.File(dspath)
     spikes = fp.get('spikes')[...]
     fp.close()
@@ -206,9 +184,9 @@ class UNet1DSegmentation(object):
     """
 
     def __init__(self, cpdir='%s/.deep-calcium-datasets/tmp' % os.path.expanduser('~'),
-                 dataset_attrs_func=_dataset_attrs_func,
-                 dataset_traces_func=_dataset_traces_func,
-                 dataset_spikes_func=_dataset_spikes_func,
+                 dataset_attrs_func=get_dataset_attrs,
+                 dataset_traces_func=get_dataset_traces,
+                 dataset_spikes_func=get_dataset_spikes,
                  net_builder_func=unet1d):
 
         self.cpdir = cpdir
@@ -220,7 +198,7 @@ class UNet1DSegmentation(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(self, dataset_paths, model_path=None, shape=(4096,), error_margin=1.,
+    def fit(self, dataset_paths, shape=(4096,), error_margin=1.,
             batch=20, nb_epochs=20, val_type='random_split', prop_trn=0.8,
             prop_val=0.2, nb_folds=5, keras_callbacks=[], optimizer=Adam(0.002)):
         """Constructs model based on parameters and trains with the given data.
@@ -229,8 +207,6 @@ class UNet1DSegmentation(object):
 
         # Arguments
             dataset_paths: list of paths to HDF5 datasets used for training.
-            model_path: filesystem path to serialized model that should be
-                loaded into the network.
             shape: tuple defining the input length.
             error_margin: number of frames within which a false positive error
                 is allowed. e.g. error_margin=1 would allow off-by-1 errors.
@@ -263,33 +239,15 @@ class UNet1DSegmentation(object):
                 best_model_path: filesystem path to the best serialized model.
             """
 
-            # Define metrics and loss based on error margin.
-            def F2M(yt, yp, margin=error_margin):
-                return F2_margin(yt, yp, margin)
-
-            def precM(yt, yp, margin=error_margin):
-                return prec_margin(yt, yp, margin)
-
-            def recaM(yt, yp, margin=error_margin):
-                return reca_margin(yt, yp, margin)
-
-            def loss(yt, yp, margin=error_margin):
-                return weighted_binary_crossentropy(yt, yp, margin)
-
-            metrics = [F2, prec, reca, F2M, precM, recaM, ytspks, ypspks]
+            metrics = [F2, prec, reca, ytspks, ypspks]
+            loss = weighted_binary_crossentropy
             custom_objects = {o.__name__: o for o in metrics + [loss]}
 
-            # Load network from disk.
-            if model_path:
-                model = load_model_with_new_input_shape(
-                    model_path, shape, compile=True, custom_objects=custom_objects)
-
             # Define, compile network.
-            else:
-                model = self.net_builder_func(shape)
-                model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
-                if model_summary:
-                    model.summary()
+            model = self.net_builder_func(shape, margin=error_margin)
+            model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+            if model_summary:
+                model.summary()
 
             # Split traces and spikes.
             tr_trn = [traces[i] for i in idxs_trn]
@@ -301,20 +259,21 @@ class UNet1DSegmentation(object):
             steps_trn = int(ceil(len(tr_trn) / batch))
 
             # Training and validation generators.
-            bg = self._batch_gen
-            gen_trn = bg(tr_trn, sp_trn, shape, batch, steps_trn)
-            gen_val = bg(tr_val, sp_val, shape, len(tr_val) * 2, 1)
+            gen_trn = self._batch_gen(
+                tr_trn, sp_trn, shape, batch, steps_trn, error_margin)
+            gen_val = self._batch_gen(
+                tr_val, sp_val, shape, len(tr_val) * 2, 1, error_margin)
             x_val, y_val = next(gen_val)
 
             # Callbacks.
             cpt, spc = (self.cpdir, int(time())), _SamplePlotCallback
             cb = [
                 spc('%s/%d_samples_{epoch:03d}_trn.png' % cpt, *next(gen_trn),
-                    title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
+                    title='Epoch {epoch: d} val_F2={val_F2: 3f}'),
                 spc('%s/%d_samples_{epoch:03d}_val.png' % cpt, x_val, y_val,
-                    title='Epoch {epoch:d} val_F2={val_F2:3f} val_F2M={val_F2M:3f}'),
-                ModelCheckpoint('%s/%d_model_val_F2M_{val_F2M:3f}_{epoch:03d}.hdf5' % cpt,
-                                monitor='val_F2M', mode='max', verbose=1, save_best_only=True),
+                    title='Epoch {epoch:d} val_F2={val_F2:3f}'),
+                ModelCheckpoint('%s/%d_model_val_F2_{val_F2:3f}_{epoch:03d}.hdf5' % cpt,
+                                monitor='val_F2', mode='max', verbose=1, save_best_only=True),
                 CSVLogger('%s/%d_metrics.csv' % cpt),
                 MetricsPlotCallback('%s/%d_metrics.png' % cpt)
             ]
@@ -402,7 +361,19 @@ class UNet1DSegmentation(object):
                      np.mean(vals_val), np.std(vals_val))
                 logger.info('%-20s trn=%-9.4lf (%.4lf) val=%-9.4lf (%.4lf)' % s)
 
-    def _batch_gen(self, traces, spikes, shape, batch_size, nb_steps):
+    def _batch_gen(self, traces, spikes, shape, batch_size, nb_steps, margin):
+
+        # Apply the error margin by max pooling the spikes once up-front.
+        lens = [len(x) for x in spikes]
+        for l in np.unique(lens):
+            idxs, = np.where(lens == l)
+            x = np.vstack([spikes[i] for i in idxs])
+            x = K.variable(x.astype(np.float32))
+            x = K.expand_dims(K.expand_dims(x, axis=0), axis=-1)
+            x = K.pool2d(x, (1, margin + 1), padding='same')
+            x = K.get_value(x[0, :, :, 0])
+            for i in range(x.shape[0]):
+                spikes[idxs[i]] = x[i]
 
         while True:
 
