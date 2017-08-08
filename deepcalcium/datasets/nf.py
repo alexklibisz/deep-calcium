@@ -56,7 +56,8 @@ def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expandus
     if type(names) == str and names.lower() == 'all':
         dataset_names = NEUROFINDER_NAMES
     elif type(names) == str and names.lower() == 'all_train':
-        dataset_names = sorted([n for n in NEUROFINDER_NAMES if '.test' not in n])
+        dataset_names = sorted(
+            [n for n in NEUROFINDER_NAMES if '.test' not in n])
     elif type(names) == str and names.lower() == 'all_test':
         dataset_names = sorted([n for n in NEUROFINDER_NAMES if '.test' in n])
     elif type(names) == str:
@@ -117,7 +118,8 @@ def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expandus
             i_shape = imread(s_paths[0]).shape
             s_shape = (len(s_paths),) + i_shape
             ds_ = dsf.create_dataset('series/raw', s_shape, dtype='int16')
-            ds_mean = dsf.create_dataset('series/mean', i_shape, dtype='float16')
+            ds_mean = dsf.create_dataset(
+                'series/mean', i_shape, dtype='float16')
             ds_max = dsf.create_dataset('series/max', i_shape, dtype='int16')
             ds_max[...] = np.zeros(i_shape)
             for idx, p in tqdm(enumerate(s_paths)):
@@ -201,16 +203,13 @@ def nf_submit(Mp, names, json_path):
             regions = []
             for lbl in range(1, np.max(mp_labeled)):
                 xx, yy = np.where(mp_labeled == lbl)
-                coords = [[x, y] for x, y in zip(xx, yy)]
+                coords = [[int(x), int(y)] for x, y in zip(xx, yy)]
                 regions.append({'coordinates': coords})
 
         submission.append({
             "dataset": name,
             "regions": regions
         })
-
-    logger.info('md5: %s' % md5(str(submission)).hexdigest())
-    logger.info('size (bytes): %d' % getsizeof(submission))
 
     fp = open(json_path, 'w')
     json.dump(submission, fp)

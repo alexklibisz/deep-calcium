@@ -141,7 +141,7 @@ def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal'
 
 def get_dataset_attrs(dspath):
     fp = h5py.File(dspath)
-    attrs = {k: v for k, v in fp.attrs.iteritems()}
+    attrs = {k: v for k, v in fp.attrs.items()}
     fp.close()
     return attrs
 
@@ -200,7 +200,7 @@ class UNet1DSegmentation(object):
 
     def fit(self, dataset_paths, shape=(4096,), error_margin=1.,
             batch=20, nb_epochs=20, val_type='random_split', prop_trn=0.8,
-            prop_val=0.2, nb_folds=5, keras_callbacks=[], optimizer=Adam(0.002)):
+            prop_val=0.2, nb_folds=5, keras_callbacks=[], optimizer=Adam(0.001)):
         """Constructs model based on parameters and trains with the given data.
         Internally, the function uses a local function to abstract the training
         for both validation types.

@@ -18,8 +18,8 @@ def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):
     import h5py
 
     def replace_shape(old_shape):
-        old_val = max(old_shape)
-        new_val = max(input_shape)
+        old_val = max([x for x in old_shape if x != None])
+        new_val = max([x for x in input_shape if x != None])
         return [x if x != old_val else new_val for x in old_shape]
 
     # Make a copy of the model hdf5 file.
@@ -28,6 +28,10 @@ def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):
 
     # Open the copied hdf5 file and modify the input layer's shape.
     h5 = h5py.File(path, 'a')
+
+    if type(h5.attrs['model_config']) == bytes:
+        h5.attrs['model_config'] = h5.attrs['model_config'].decode()
+
     config = loads(h5.attrs['model_config'])
 
     for layer in config['config']['layers']:
@@ -40,7 +44,7 @@ def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):
             layer['config']['output_shape'] = replace_shape(
                 layer['config']['output_shape'])
 
-    h5.attrs['model_config'] = dumps(config)
+    h5.attrs['model_config'] = dumps(config).encode()
     h5.close()
 
     # Load model, delete temporary file, return model.

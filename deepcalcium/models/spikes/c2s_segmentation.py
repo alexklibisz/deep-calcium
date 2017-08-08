@@ -1,5 +1,4 @@
-from multiprocessing import Pool
-from psutil import cpu_count
+from multiprocessing import Pool, cpu_count
 from time import time
 import c2s
 import h5py
@@ -19,7 +18,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ""
 
 def _dataset_attrs_func(dspath):
     fp = h5py.File(dspath)
-    attrs = {k: v for k, v in fp.attrs.iteritems()}
+    attrs = {k: v for k, v in fp.attrs.items()}
     fp.close()
     return attrs
 

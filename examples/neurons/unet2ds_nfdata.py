@@ -92,6 +92,7 @@ def prediction(dataset_name, model_path, cpdir):
             model.cpdir, ('_TTA' if aug else ''))
         nf_submit(Mp, names, json_path)
 
+
 if __name__ == "__main__":
 
     ap = argparse.ArgumentParser(description='CLI for UNet 2D Summary example.')
@@ -102,7 +103,8 @@ if __name__ == "__main__":
     # Training cli.
     sp_trn = sp.add_parser('train', help='CLI for training.')
     sp_trn.set_defaults(which='train')
-    sp_trn.add_argument('dataset', help='dataset name', default='all_train')
+    sp_trn.add_argument('dataset', help='dataset name',
+                        default='all_train', type=str)
     sp_trn.add_argument('-m', '--model', help='path to model')
     sp_trn.add_argument(
         '-c', '--cpdir', help='checkpoint directory', default=cpdir)
@@ -110,7 +112,8 @@ if __name__ == "__main__":
     # Training cli.
     sp_eva = sp.add_parser('evaluate', help='CLI for training.')
     sp_eva.set_defaults(which='evaluate')
-    sp_eva.add_argument('dataset', help='dataset name', default='all_train')
+    sp_eva.add_argument('dataset', help='dataset name',
+                        default='all_train', type=str)
     sp_eva.add_argument('-m', '--model', help='path to model', required=True)
     sp_eva.add_argument(
         '-c', '--cpdir', help='checkpoint directory', default=cpdir)
@@ -118,7 +121,7 @@ if __name__ == "__main__":
     # Prediction cli.
     sp_prd = sp.add_parser('predict', help='CLI for prediction.')
     sp_prd.set_defaults(which='predict')
-    sp_prd.add_argument('dataset', help='dataset name', default='all')
+    sp_prd.add_argument('dataset', help='dataset name', default='all', type=str)
     sp_prd.add_argument('-m', '--model', help='path to model', required=True)
     sp_prd.add_argument(
         '-c', '--cpdir', help='checkpoint directory', default=cpdir)
