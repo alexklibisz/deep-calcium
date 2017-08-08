@@ -8,6 +8,7 @@ sh autogen.sh
 ./configure --enable-sse2
 make CFLAGS="-fPIC"
 cd ../..
+pip install scipy numpy
 python setup.py build
 python setup.py install
 rm cmt-develop

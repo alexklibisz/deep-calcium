@@ -11,10 +11,10 @@ def ignore_req(reqstr):
     return bool(sum([reqstr.startswith(b) for b in bad_reqs]))
 
 
-install_reqs = parse_requirements('requirements.txt', session='hack')
-install_reqs = [str(ir.req) for ir in install_reqs
-                if not ignore_req(str(ir.req))]
-install_reqs.append('tensorflow-gpu')
+full_reqs = parse_requirements('requirements.txt', session='hack')
+full_reqs = [str(ir.req) for ir in full_reqs
+             if not ignore_req(str(ir.req))]
+full_reqs.append('tensorflow-gpu')
 
 setup(name='deepcalcium',
       version='0.0.1',
@@ -22,6 +22,9 @@ setup(name='deepcalcium',
       author='Alex Klibisz',
       author_email='aklibisz@gmail.com',
       url='https://github.com/alexklibisz/deep-calcium',
-      install_requires=install_reqs,
-      extras_require={},
+      install_requires=['numpy', 'scipy', 'h5py',
+                        'keras', 'scikit-image', 'tensorflow'],
+      extras_require={
+          'develop': full_reqs
+      },
       packages=find_packages())

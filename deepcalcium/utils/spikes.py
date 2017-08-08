@@ -1,3 +1,7 @@
+import keras.backend as K
+import numpy as np
+
+
 def np2k(kfunc, yt, yp, **args):
     yt = K.variable(yt)
     yp = K.variable(yp)
