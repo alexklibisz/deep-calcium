@@ -2,6 +2,10 @@ from pip.req import parse_requirements
 from setuptools import setup
 from setuptools import find_packages
 
+import sys
+sys.path.append('.')
+from deepcalcium import __version__
+
 
 def ignore_req(reqstr):
     bad_reqs = ['c2s', 'cmt', 'tensorflow-gpu']
@@ -21,7 +25,7 @@ lib_reqs = ['numpy', 'scipy', 'cython', 'h5py', 'tqdm',
             'neurofinder', 'pandas', 'requests']
 
 setup(name='deepcalcium',
-      version='0.0.1',
+      version=__version__,
       description='Deep learning for calcium imaging data.',
       author='Alex Klibisz',
       author_email='aklibisz@gmail.com',
