@@ -5,7 +5,7 @@ from setuptools import find_packages
 import sys
 sys.path.append('.')
 from deepcalcium import __version__
-from deepcalcium.utils import get_config
+from deepcalcium.utils.config import get_config
 
 # Create configuration.
 get_config()
