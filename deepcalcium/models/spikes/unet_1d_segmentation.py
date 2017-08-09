@@ -2,7 +2,7 @@ from __future__ import division, print_function
 from glob import glob
 from itertools import cycle
 from keras.callbacks import Callback, ModelCheckpoint, CSVLogger, ReduceLROnPlateau, EarlyStopping
-from keras.optimizers import Adam
+from keras.optimizers import SGD, Adam
 from keras.losses import binary_crossentropy
 from math import ceil
 from os import path, mkdir
@@ -19,6 +19,7 @@ from deepcalcium.utils.keras_helpers import MetricsPlotCallback, load_model_with
 from deepcalcium.utils.spikes import F2, prec, reca, ytspks, ypspks, weighted_binary_crossentropy, plot_traces_spikes
 
 rng = np.random
+MODEL_URL_LATEST = 'https://github.com/alexklibisz/deep-calcium/releases/download/weights-UNet1D-0.0.1/1502296519_model_val_F2_0.774480_050.hdf5'
 
 
 class _SamplePlotCallback(Callback):
@@ -44,7 +45,7 @@ class _SamplePlotCallback(Callback):
                            dpi=120)
 
 
-def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.12, margin=2):
+def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.08, margin=2):
     """Builds and returns the UNet architecture using Keras.
     # Arguments
         window_shape: tuple of one integer defining the input/output window shape.
@@ -55,6 +56,9 @@ def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal'
             is considered best-practice when using ReLU activations, as is the case in this network.
         prop_dropout_base: proportion of dropout after the first pooling layer. Two-times the
             proportion is used after subsequent pooling layers on the downward pass.
+        margin: the effective "error margin" for the architecture. A margin of 2 means that a predicted
+            positive will at least be partially correct if it falls within 2 time-steps of the ground-truth
+            positive. This is implemented by max-pooling before the final softmax layer.
     # Returns
         model: Keras model, not compiled.
     """
@@ -201,7 +205,8 @@ class UNet1DSegmentation(object):
 
     def fit(self, dataset_paths, shape=(4096,), error_margin=1.,
             batch=20, nb_epochs=20, val_type='random_split', prop_trn=0.8,
-            prop_val=0.2, nb_folds=5, keras_callbacks=[], optimizer=Adam(0.002)):
+            prop_val=0.2, nb_folds=5, keras_callbacks=[],
+            optimizer=Adam(0.002)):
         """Constructs model based on parameters and trains with the given data.
         Internally, the function uses a local function to abstract the training
         for both validation types.
@@ -241,7 +246,9 @@ class UNet1DSegmentation(object):
             """
 
             metrics = [F2, prec, reca, ytspks, ypspks]
-            loss = weighted_binary_crossentropy
+
+            def loss(yt, yp):
+                return weighted_binary_crossentropy(yt, yp, weightpos=3.0)
             custom_objects = {o.__name__: o for o in metrics + [loss]}
 
             # Define, compile network.

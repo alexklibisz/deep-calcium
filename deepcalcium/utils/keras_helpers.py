@@ -1,9 +1,24 @@
 from __future__ import division
 from keras.callbacks import Callback
 from math import ceil
+from urllib import request
+import logging
 import keras.backend as K
 import numpy as np
+import os
 import pandas as pd
+
+from deepcalcium.utils.runtime import funcname
+
+
+def download_model(URL, save_path):
+    logger = logging.getLogger(funcname())
+    if os.path.exists(save_path):
+        logger.info('Model downloaded at %s' % save_path)
+        return
+    logger.info('Downloading model from %s to %s' % (URL, save_path))
+    request.urlretrieve(URL, save_path)
+    logger.info('Download complete.')
 
 
 def load_model_with_new_input_shape(model_path, input_shape, **load_model_args):

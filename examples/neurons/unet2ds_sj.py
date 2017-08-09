@@ -18,17 +18,16 @@ import os
 
 import sys
 sys.path.append('.')
-from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary
+from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary, MODEL_URL_LATEST
 from deepcalcium.utils.config import DATASETS_DIR, CHECKPOINTS_DIR
+from deepcalcium.utils.keras_helpers import download_model
 
 CHECKPOINTS_DIR = '%s/neurons_unet2ds_sj' % CHECKPOINTS_DIR
 os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
 DATASETS_DIR = '%s/neurons_sj' % DATASETS_DIR
 os.makedirs(DATASETS_DIR, exist_ok=True)
-MODEL_PATH = '%s/neurons_unet2ds.hdf5' % CHECKPOINTS_DIR
-MODEL_URL = 'http://bit.ly/neurons_unet2ds'
-assert os.path.exists(MODEL_PATH), "Download a model from %s and save in %s" % \
-    (MODEL_URL, MODEL_PATH)
+MODEL_PATH = '%s/%s' % (CHECKPOINTS_DIR, MODEL_URL_LATEST.split('/')[-1])
+download_model(MODEL_URL_LATEST, MODEL_PATH)
 
 
 def make_stjude_dataset(name, tiffglob, mat_path, dataset_path):

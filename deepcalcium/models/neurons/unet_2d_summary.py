@@ -25,6 +25,8 @@ from deepcalcium.utils.neurons import F1, prec, reca, dice, dicesq, dice_loss, d
 from deepcalcium.utils.neurons import mask_outlines
 from deepcalcium.utils.neurons import INVERTIBLE_2D_AUGMENTATIONS
 
+MODEL_URL_LATEST = 'https://github.com/alexklibisz/deep-calcium/releases/download/weights-UNet2DS-0.0.1/model_val_F1_0.843_submission_0.569.hdf5'
+
 
 class _ValidationMetricsCB(Callback):
     """Keras callback that evaluates validation metrics on full-size predictions during training."""
