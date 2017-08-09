@@ -1,11 +1,11 @@
 from __future__ import division
 from scipy.misc import imsave
 from skimage.color import gray2rgb, rgb2gray
-from skvideo.io import vwrite
 from regional import one
 import keras.backend as K
 import numpy as np
 import logging
+import platform
 
 from deepcalcium.utils.runtime import funcname
 
@@ -150,6 +150,7 @@ def dataset_to_mp4(s, m, mp4_path):
 
     """
 
+    from skvideo.io import vwrite
     logger = logging.getLogger(funcname())
     logger.info('Preparing video %s.' % mp4_path)
 
