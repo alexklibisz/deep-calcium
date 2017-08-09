@@ -10,6 +10,7 @@ import pickle as pkl
 import sys
 sys.path.append('.')
 from deepcalcium.utils.runtime import funcname
+from deepcalcium.utils.config import CHECKPOINTS_DIR
 from deepcalcium.utils.spikes import np2k, F2_margin, prec_margin, reca_margin
 
 rng = np.random
@@ -47,7 +48,7 @@ def c2s_preprocess_parallel(argsdict):
 
 class C2SSegmentation(object):
 
-    def __init__(self, cpdir='%s/.deep-calcium-datasets/tmp' % os.path.expanduser('~'),
+    def __init__(self, cpdir=CHECKPOINTS_DIR,
                  dataset_attrs_func=_dataset_attrs_func,
                  dataset_traces_func=_dataset_traces_func,
                  dataset_spikes_func=_dataset_spikes_func):

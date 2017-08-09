@@ -16,6 +16,7 @@ import numpy as np
 import requests
 
 from deepcalcium.utils.runtime import funcname
+from deepcalcium.utils.config import DATASETS_DIR
 
 NEUROFINDER_NAMES = sorted([
     'neurofinder.00.00', 'neurofinder.00.01', 'neurofinder.00.02',
@@ -33,7 +34,7 @@ NAME_TO_URL = {name: 'https://s3.amazonaws.com/neuro.datasets/challenges/neurofi
                for name in NEUROFINDER_NAMES}
 
 
-def nf_load_hdf5(names, datasets_dir='%s/.deep-calcium-datasets' % path.expanduser('~')):
+def nf_load_hdf5(names, datasets_dir='%s/neurons_nf' % DATASETS_DIR):
     """Downloads neurofinder datasets and pre-processes them into HDF5 datasets.
     Each HDF5 file will consist of the following datasets:
     1. series/raw:  (no. images x height x width) array of the raw TIFF values.

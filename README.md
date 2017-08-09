@@ -6,22 +6,18 @@ Deep Learning Models for Calcium Imaging Data
 
 Install the package and make predictions on Neurofinder using a pre-trained UNet2DS model.
 
-*This assumes python2.7 and pip2. python3.4 compatibility will hopefully be available soon.*
+**Note: This assumes python3.5 and pip3.**
 
 ```
-# Install from Github repo.
-$ pip2 install --upgrade --user -I pip
-$ pip2 install --user git+https://github.com/alexklibisz/deep-calcium.git
+# Install from Github repo. Need to upgrade pip.
+$ pip install --upgrade --user -I pip
+$ pip install --user git+https://github.com/alexklibisz/deep-calcium.git
 
-# Make a checkpoints directories to save outputs.
-mkdir checkpoints
-
-# Download the model and weights.
-$ wget https://goo.gl/EjpijZ -O model.hdf5
+# Download the model from http://bit.ly/neurons_unet2ds (google drive) and save it to model.hdf5
 
 # Download the example script and evaluate predictions on the first training dataset.
 # This will download and preprocess the dataset to ~/.deep-calcium-datasets, requiring ~3.1GB of disk space.
-$ wget https://raw.githubusercontent.com/alexklibisz/deep-calcium/dev/examples/neurons/unet2ds_nfdata.py
+$ wget https://raw.githubusercontent.com/alexklibisz/deep-calcium/dev/examples/neurons/unet2ds_nf.py
 $ CUDA_VISIBLE_DEVICES="0" python unet2ds_nfdata.py evaluate neurofinder.00.00 --model model.hdf5
 
 ```
@@ -40,4 +36,4 @@ $ CUDA_VISIBLE_DEVICES="0" python unet2ds_nfdata.py evaluate neurofinder.00.00 -
 |6/16/17|UNet with a single batchnorm layer at the input. Images scaled to [0,1]. |0.5356|[Image](https://github.com/alexklibisz/deep-calcium/blob/dev/media/nf_scores_unet2ds_0.5356.png)|[Dropbox](https://www.dropbox.com/sh/tqbclt7muuvqfw4/AACqVVA8oJlZNIYvfc6x6gO2a/weights_val_nf_f1_mean.hdf5?dl=1)|[Dropbox](https://www.dropbox.com/sh/tqbclt7muuvqfw4/AADET6ZVlUbHZsqHKgwDOysXa?dl=0)|[0bda9d4](https://github.com/alexklibisz/deep-calcium/commit/0bda9d4b9cad71fb3685671c2e699c88d9195a24)|
 |7/12/17|Same as 6/16/17, but with 8x test-time augmentation. |0.5422|[Image](https://github.com/alexklibisz/deep-calcium/blob/dev/media/nf_scores_unet2ds-tta_0.5422.png)|[Dropbox](https://www.dropbox.com/s/x5bv4klz16ai6wa/model_val_nf_f1_mean.hdf5?dl=1)|[Dropbox](https://www.dropbox.com/sh/tqbclt7muuvqfw4/AADET6ZVlUbHZsqHKgwDOysXa?dl=0)|[f1b33bf](https://github.com/alexklibisz/deep-calcium/commit/f1b33bfe48425d0d7a33f7f74ded19905a24b88f)|
 |7/13/17|UNet with batchnorm between each conv and ReLU. Mean subtraction and normalization on each summary image. Mask-summary erosion to eliminate merged neurons in ground-truth mask.|0.5611|[Image](https://github.com/alexklibisz/deep-calcium/blob/dev/media/nf_scores_unet2ds_0.5611.png)|[Dropbox](https://www.dropbox.com/sh/5nwrxj1pvsbxvwn/AAAteOMVC45Ovf6g2iu10c_Ya/1499980441_model_07_0.843.hdf5?dl=1)|[Dropbox](https://www.dropbox.com/sh/5nwrxj1pvsbxvwn/AABW_ksvueR3GdJIVCyNdFxIa?dl=0)|[2b15d1b](https://github.com/alexklibisz/deep-calcium/blob/2b15d1b07a780ff4b2477524f255e41533fc6205/deepcalcium/models/neurons/unet_2d_summary.py)|
-|7/13/17|Same as 7/13/17, but with 8x test-time augmentation. Replaced UNet2DS submission with this one. |0.5689|[Image](https://github.com/alexklibisz/deep-calcium/blob/dev/media/nf_scores_unet2ds-tta_0.5689.png)|[Dropbox](https://www.dropbox.com/sh/5nwrxj1pvsbxvwn/AAAteOMVC45Ovf6g2iu10c_Ya/1499980441_model_07_0.843.hdf5?dl=1)|[Dropbox](https://www.dropbox.com/sh/5nwrxj1pvsbxvwn/AABW_ksvueR3GdJIVCyNdFxIa?dl=0)|[2b15d1b](https://github.com/alexklibisz/deep-calcium/blob/2b15d1b07a780ff4b2477524f255e41533fc6205/deepcalcium/models/neurons/unet_2d_summary.py)|
+|7/13/17|Same as 7/13/17, but with 8x test-time augmentation. Replaced UNet2DS submission with this one. |0.5689|[Image](https://github.com/alexklibisz/deep-calcium/blob/dev/media/nf_scores_unet2ds-tta_0.5689.png)|[Google Drive](http://bit.ly/neurons_unet2ds)|[Dropbox](https://www.dropbox.com/sh/5nwrxj1pvsbxvwn/AABW_ksvueR3GdJIVCyNdFxIa?dl=0)|[2b15d1b](https://github.com/alexklibisz/deep-calcium/blob/2b15d1b07a780ff4b2477524f255e41533fc6205/deepcalcium/models/neurons/unet_2d_summary.py)|

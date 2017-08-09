@@ -18,6 +18,7 @@ import os
 import pickle
 
 from deepcalcium.utils.runtime import funcname
+from deepcalcium.utils.config import CHECKPOINTS_DIR
 from deepcalcium.datasets.nf import nf_mask_metrics
 from deepcalcium.utils.keras_helpers import MetricsPlotCallback, load_model_with_new_input_shape
 from deepcalcium.utils.neurons import F1, prec, reca, dice, dicesq, dice_loss, dicesq_loss, posyt, posyp, weighted_binary_crossentropy
@@ -117,8 +118,8 @@ class _ValidationMetricsCB(Callback):
         logger.info('validation time = %.3lf seconds' % (time() - tic))
 
 
-def unet_builder(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='he_normal',
-                 prop_dropout_base=0.25, upsampling_or_transpose='transpose'):
+def unet(window_shape=(128, 128), nb_filters_base=32, conv_kernel_init='he_normal',
+         prop_dropout_base=0.25, upsampling_or_transpose='transpose'):
     """Builds and returns the UNet architecture using Keras.
 
     # Arguments
@@ -310,9 +311,9 @@ class UNet2DSummary(object):
             training and prediction code.
     """
 
-    def __init__(self, cpdir='%s/.deep-calcium-datasets/tmp' % path.expanduser('~'),
+    def __init__(self, cpdir='%s/neurons_unet2ds' % CHECKPOINTS_DIR,
                  dataset_name_func=_name_dataset, series_summary_func=_summarize_series,
-                 mask_summary_func=_summarize_mask, net_builder_func=unet_builder):
+                 mask_summary_func=_summarize_mask, net_builder_func=unet):
 
         self.cpdir = cpdir
         self.dataset_name_func = dataset_name_func
@@ -466,7 +467,7 @@ class UNet2DSummary(object):
         neuron_locs = []
         for ds_idx, m in enumerate(M_summ):
             ymin, ymax = y_coords[ds_idx]
-            neuron_locs.append(zip(*np.where(m[ymin:ymax, :] == 1)))
+            neuron_locs.append(list(zip(*np.where(m[ymin:ymax, :] == 1))))
 
         # Dataset indexes and default probability distribution for sampling
         # them.

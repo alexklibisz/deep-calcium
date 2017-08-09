@@ -15,11 +15,20 @@ import h5py
 import logging
 import numpy as np
 import os
-import requests
 
 import sys
 sys.path.append('.')
 from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary
+from deepcalcium.utils.config import DATASETS_DIR, CHECKPOINTS_DIR
+
+CHECKPOINTS_DIR = '%s/neurons_unet2ds_sj' % CHECKPOINTS_DIR
+os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
+DATASETS_DIR = '%s/neurons_sj' % DATASETS_DIR
+os.makedirs(DATASETS_DIR, exist_ok=True)
+MODEL_PATH = '%s/neurons_unet2ds.hdf5' % CHECKPOINTS_DIR
+MODEL_URL = 'http://bit.ly/neurons_unet2ds'
+assert os.path.exists(MODEL_PATH), "Download a model from %s and save in %s" % \
+    (MODEL_URL, MODEL_PATH)
 
 
 def make_stjude_dataset(name, tiffglob, mat_path, dataset_path):
@@ -109,19 +118,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    # CONFIG: URL to the serialized deep neural network model.
-    MURL = 'https://www.dropbox.com/sh/5nwrxj1pvsbxvwn/AAAteOMVC45Ovf6g2iu10c_Ya/1499980441_model_07_0.843.hdf5?dl=1'
-
-    # CONFIG: define the checkpoint directory where predictions will be stored.
-    cpdir = 'checkpoints/sjdata'
-    if not os.path.exists(cpdir):
-        os.mkdir(cpdir)
-
-    # CONFIG: define the directory where the converted datasets will be stored.
-    dsdir = '%s/.deep-calcium-datasets/stjude' % os.path.expanduser('~')
-    if not os.path.exists(dsdir):
-        os.mkdir(dsdir)
-
     # CONFIG: parameters for converting each dataset. See the first item below for precise explanation.
     # These datasets are current as of 7/19/17.
     # Common directory where all datasets were stored.
@@ -135,47 +131,47 @@ if __name__ == "__main__":
             # 3. Path to Matlab export created with the custom GUI.
             base + '010517/TSeries-01052017-0105-008_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
             # 4. Path where this dataset should be saved.
-            dsdir + '/sj.neurons.010517.hdf5'
+            DATASETS_DIR + '/sj.neurons.010517.hdf5'
         ), (
             'sj.010617',
             base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/frame*.tif',
             base + '010617/TSeries-01062017-0106-002_stabilized/512_pruned/Exported_Matlab_Data_200.mat',
-            dsdir + '/sj.neurons.010617.hdf5'
+            DATASETS_DIR + '/sj.neurons.010617.hdf5'
         ), (
             'sj.022616.01',
             base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/frame*.tif',
             base + '022616/TSeries-02262016-0226-001_stabilized/400_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.neurons.022616.01.hdf5'
+            DATASETS_DIR + '/sj.neurons.022616.01.hdf5'
         ), (
             'sj.022616.02',
             base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/frame*.tif',
             base + '022616/TSeries-02262016-0226-002_stabilized/400_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.neurons.022616.02.hdf5'
+            DATASETS_DIR + '/sj.neurons.022616.02.hdf5'
         ), (
             'sj.022616.03',
             base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/frame*.tif',
             base + '022616/TSeries-02262016-0226-003_stabilized/400_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.neurons.022616.03.hdf5'
+            DATASETS_DIR + '/sj.neurons.022616.03.hdf5'
         ), (
             'sj.100716',
             base + '100716/TSeries-10072016-1007-003/512_pruned/frame*.tif',
             base + '100716/TSeries-10072016-1007-003/512_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.neurons.100716.hdf5'
+            DATASETS_DIR + '/sj.neurons.100716.hdf5'
         ), (
             'sj.111216',
             base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/frame*.tif',
             base + '111216/TSeries-11122016-1112-003_stabilized/512_pruned/Exported_Matlab_Data.mat',
-            dsdir + '/sj.neurons.111216.hdf5'
+            DATASETS_DIR + '/sj.neurons.111216.hdf5'
         ), (
             'sj.120116',
             base + '120116/TSeries-12012016-1201-002_stabilized/512_pruned/frame*.tif',
             base + '120116/TSeries-12012016-1201-002_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
-            dsdir + '/sj.neurons.120116.hdf5'
+            DATASETS_DIR + '/sj.neurons.120116.hdf5'
         ), (
             'sj.120216',
             base + '120216/TSeries-12022016-1202-001_stabilized/512_pruned/frame*.tif',
             base + '120216/TSeries-12022016-1202-001_stabilized/512_pruned/Exported_Matlab_Data_200ms.mat',
-            dsdir + '/sj.neurons.120216.hdf5'
+            DATASETS_DIR + '/sj.neurons.120216.hdf5'
         )
     ]
 
@@ -183,18 +179,11 @@ if __name__ == "__main__":
     ds_paths = sorted([make_stjude_dataset(name, tg, rp, dsp)
                        for name, tg, rp, dsp in dataset_args])
 
-    # Download weights - or you can do it manually.
-    model_path = '%s/weights.hdf5' % cpdir
-    if not os.path.exists(model_path):
-        model_dnld = requests.get(MURL)
-        with open(model_path, 'wb') as model_file:
-            model_file.write(model_dnld.content)
-
     # Model setup and predictions.
-    model = UNet2DSummary(cpdir=cpdir)
-    Mp, names = model.predict(ds_paths, model_path, window_shape=(512, 512),
-                              print_scores=True, save=True)
+    model = UNet2DSummary(cpdir=CHECKPOINTS_DIR)
+    Mp, names = model.predict(ds_paths, MODEL_PATH, window_shape=(512, 512),
+                              print_scores=True, save=True, augmentation=True)
 
     # Print name, shape, path to saved image for each dataset.
-    for name, mp, path in zip(names, Mp, sorted(glob('%s/*.png' % cpdir))):
+    for name, mp, path in zip(names, Mp, sorted(glob('%s/*.png' % CHECKPOINTS_DIR))):
         print('%-15s %-10s %s' % (name, str(mp.shape), path))

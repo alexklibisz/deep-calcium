@@ -14,6 +14,7 @@ import numpy as np
 import os
 
 from deepcalcium.utils.runtime import funcname
+from deepcalcium.utils.config import CHECKPOINTS_DIR
 from deepcalcium.utils.keras_helpers import MetricsPlotCallback, load_model_with_new_input_shape
 from deepcalcium.utils.spikes import F2, prec, reca, ytspks, ypspks, weighted_binary_crossentropy, plot_traces_spikes
 
@@ -43,7 +44,7 @@ class _SamplePlotCallback(Callback):
                            dpi=120)
 
 
-def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.0, margin=2):
+def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.12, margin=2):
     """Builds and returns the UNet architecture using Keras.
     # Arguments
         window_shape: tuple of one integer defining the input/output window shape.
@@ -183,7 +184,7 @@ class UNet1DSegmentation(object):
             code.
     """
 
-    def __init__(self, cpdir='%s/.deep-calcium-datasets/tmp' % os.path.expanduser('~'),
+    def __init__(self, cpdir='%s/spikes_unet1d' % CHECKPOINTS_DIR,
                  dataset_attrs_func=get_dataset_attrs,
                  dataset_traces_func=get_dataset_traces,
                  dataset_spikes_func=get_dataset_spikes,
@@ -200,7 +201,7 @@ class UNet1DSegmentation(object):
 
     def fit(self, dataset_paths, shape=(4096,), error_margin=1.,
             batch=20, nb_epochs=20, val_type='random_split', prop_trn=0.8,
-            prop_val=0.2, nb_folds=5, keras_callbacks=[], optimizer=Adam(0.001)):
+            prop_val=0.2, nb_folds=5, keras_callbacks=[], optimizer=Adam(0.002)):
         """Constructs model based on parameters and trains with the given data.
         Internally, the function uses a local function to abstract the training
         for both validation types.
@@ -275,7 +276,10 @@ class UNet1DSegmentation(object):
                 ModelCheckpoint('%s/%d_model_val_F2_{val_F2:3f}_{epoch:03d}.hdf5' % cpt,
                                 monitor='val_F2', mode='max', verbose=1, save_best_only=True),
                 CSVLogger('%s/%d_metrics.csv' % cpt),
-                MetricsPlotCallback('%s/%d_metrics.png' % cpt)
+                MetricsPlotCallback('%s/%d_metrics.png' % cpt),
+                ReduceLROnPlateau(monitor='val_F2', factor=0.5, min_lr=0.0001,
+                                  patience=max(10, int(nb_epochs * 0.2)),
+                                  mode='max', epsilon=1e-2, verbose=1)
             ]
 
             # Train.
