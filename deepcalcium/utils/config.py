@@ -11,6 +11,9 @@ def get_config():
     base_dir = base_dir_windows if system() == 'Windows' else base_dir_unix
     config_path = '%s/deep-calcium.json' % base_dir
 
+    if not os.path.exists(base_dir):
+        os.mkdir(base_dir)
+
     if not os.path.exists(config_path):
         config_obj = {
             'datasets_dir': '%s/datasets' % base_dir,
