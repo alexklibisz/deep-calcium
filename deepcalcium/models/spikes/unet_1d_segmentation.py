@@ -45,7 +45,7 @@ class _SamplePlotCallback(Callback):
                            dpi=120)
 
 
-def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.08, margin=2):
+def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.1, margin=4):
     """Builds and returns the UNet architecture using Keras.
     # Arguments
         window_shape: tuple of one integer defining the input/output window shape.
@@ -203,10 +203,9 @@ class UNet1DSegmentation(object):
         if not path.exists(self.cpdir):
             mkdir(self.cpdir)
 
-    def fit(self, dataset_paths, shape=(4096,), error_margin=1.,
+    def fit(self, dataset_paths, shape=(4096,), error_margin=4.,
             batch=20, nb_epochs=20, val_type='random_split', prop_trn=0.8,
-            prop_val=0.2, nb_folds=5, keras_callbacks=[],
-            optimizer=Adam(0.002)):
+            prop_val=0.2, nb_folds=5, keras_callbacks=[], optimizer=Adam(0.001)):
         """Constructs model based on parameters and trains with the given data.
         Internally, the function uses a local function to abstract the training
         for both validation types.
@@ -248,7 +247,7 @@ class UNet1DSegmentation(object):
             metrics = [F2, prec, reca, ytspks, ypspks]
 
             def loss(yt, yp):
-                return weighted_binary_crossentropy(yt, yp, weightpos=3.0)
+                return weighted_binary_crossentropy(yt, yp, weightpos=2.0)
             custom_objects = {o.__name__: o for o in metrics + [loss]}
 
             # Define, compile network.
