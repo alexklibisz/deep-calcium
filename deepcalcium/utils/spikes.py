@@ -72,22 +72,27 @@ def plot_traces_spikes(traces, spikes_true=None, spikes_pred=None, title=None, s
 
         # Plot signal.
         t = traces[i]
-        ax.plot(t, c='k')
+        ax.plot(t, c='k', linewidth=1.0)
 
         # Scatter points for true spikes (blue circle).
         if type(spikes_true) == np.ndarray:
             xxt, = np.where(spikes_true[i] == 1)
-            ax.scatter(xxt, t[xxt], c='b', marker='o',
-                       alpha=0.5, label='Ground-truth spike')
+            ax.scatter(xxt, t[xxt], c='cyan', marker='o', s=150,
+                       alpha=0.8, label='Ground-truth spike')
 
-        # Scatter points for predicted spikes (red x).
+        # Plot the line segments with predicted spikes.
+        # There is likely a more efficient way to do this.
         if type(spikes_pred) == np.ndarray:
-            xxp, = np.where(spikes_pred[i].round() == 1)
-            ax.scatter(xxp, t[xxp], c='r', marker='x',
-                       alpha=1., label='Predicted spike')
+            xx, = np.where(spikes_pred[i].round() == 1)
+            for j, x in enumerate(xx):
+                label = 'Predicted spikes' if j == 0 else None
+                ax.plot([x, x + 1], t[[x, x + 1]], 'r', label=label)
 
         if (i == 0 or i == len(axes) - 1) and legend:
             ax.legend(loc='lower left', ncol=3)
+
+        ax.set_ylabel('Brightness')
+        ax.set_xlabel('Time steps')
 
     plt.subplots_adjust(left=None, wspace=None, hspace=0.7, right=None)
     if title:
