@@ -100,7 +100,8 @@ def plot_traces_spikes(traces, spikes_true=None, spikes_pred=None, title=None, s
         plt.suptitle(title)
 
     if save_path:
-        plt.savefig(save_path, dpi=dpi, bbox_inches='tight', pad_inches=0)
+        plt.savefig(save_path, dpi=dpi, mode=save_path.split('.')[-1],
+                    bbox_inches='tight', pad_inches=0)
         plt.close()
     else:
         plt.show()
