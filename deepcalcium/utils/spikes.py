@@ -84,9 +84,10 @@ def plot_traces_spikes(traces, spikes_true=None, spikes_pred=None, title=None, s
         # There is likely a more efficient way to do this.
         if type(spikes_pred) == np.ndarray:
             xx, = np.where(spikes_pred[i].round() == 1)
-            for j, x in enumerate(xx):
-                label = 'Predicted spikes' if j == 0 else None
+            label = 'Predicted spikes'
+            for x in xx:
                 ax.plot([x, x + 1], t[[x, x + 1]], 'r', label=label)
+                label = None  # Only label first one.
 
         if (i == 0 or i == len(axes) - 1) and legend:
             ax.legend(loc='lower left', ncol=3)

@@ -47,6 +47,7 @@ class _SamplePlotCallback(Callback):
 
 def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal', prop_dropout_base=0.05, margin=4):
     """Builds and returns the UNet architecture using Keras.
+
     # Arguments
         window_shape: tuple of one integer defining the input/output window shape.
         nb_filters_base: number of convolutional filters used at the first layer. This is doubled
@@ -176,6 +177,13 @@ class UNet1DSegmentation(object):
     """Trace segmentation wrapper class. In general, this type of model takes a
     calcium trace of length N frames and return a binary segmentation
     of length N frames. e.g. f([0.1, 0.2, ...]) -> [0, 1, ...].
+
+    The expected structure for HDF5 dataset files for this model is as follows:
+    Attributes:
+        'name': a name for identifying the HDF5 dataset e.g. 'experiment-001'
+    Datasets:
+        'traces': a matrix of real-valued calcium-traces with shape (no. traces, trace length).
+        'spikes': a matrix of corresponding binary spike segmentations with shape (no. traces, trace length).
 
     # Arguments
         cpdir: checkpoint directory for training artifacts and predictions.
