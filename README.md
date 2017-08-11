@@ -13,13 +13,28 @@ Install the package and make predictions on Neurofinder using a pre-trained UNet
 $ pip install --upgrade --user -I pip
 $ pip install --user git+https://github.com/alexklibisz/deep-calcium.git
 
-# Download the model from http://bit.ly/neurons_unet2ds (google drive) and save it to model.hdf5
+# Download the model from Github releases.
+$ wget https://github.com/alexklibisz/deep-calcium/releases/download/v0.0.1-weights/unet2ds_model.hdf5
+
 
 # Download the example script and evaluate predictions on the first training dataset.
 # This will download and preprocess the dataset to ~/.deep-calcium-datasets, requiring ~3.1GB of disk space.
 $ wget https://raw.githubusercontent.com/alexklibisz/deep-calcium/dev/examples/neurons/unet2ds_nf.py
-$ CUDA_VISIBLE_DEVICES="0" python unet2ds_nfdata.py evaluate neurofinder.00.00 --model model.hdf5
+$ CUDA_VISIBLE_DEVICES="0" python unet2ds_nf.py evaluate neurofinder.00.00 --model unet2ds_model.hdf5
+```
 
+You should see output similar to this:
+
+```
+$ INFO:predict:Loaded model from unet2ds_model.hdf5.
+$ INFO:predict:neurofinder.00.00: prec=0.976, reca=1.000, incl=0.084, excl=0.109, comb=0.988
+$ INFO:predict:Saved /home/kzh/.deep-calcium/checkpoints/neurons_unet2ds_nf/neurofinder.00.00_mp.png
+$ INFO:predict:Mean prec=0.976, reca=1.000, comb=0.988
+$ INFO:evaluation:Evaluation without TTA.
+$ INFO:predict:Loaded model from unet2ds_model.hdf5.
+$ INFO:predict:neurofinder.00.00: prec=0.919, reca=1.000, incl=0.106, excl=0.133, comb=0.958
+$ INFO:predict:Saved /home/kzh/.deep-calcium/checkpoints/neurons_unet2ds_nf/neurofinder.00.00_mp.png
+$ INFO:predict:Mean prec=0.919, reca=1.000, comb=0.958
 ```
 
 ## Models for Neuron Segmentation
