@@ -19,7 +19,7 @@ from deepcalcium.utils.keras_helpers import MetricsPlotCallback, load_model_with
 from deepcalcium.utils.spikes import F2, prec, reca, ytspks, ypspks, weighted_binary_crossentropy, plot_traces_spikes
 
 rng = np.random
-MODEL_URL_LATEST = 'https://github.com/alexklibisz/deep-calcium/releases/download/weights-UNet1D-0.0.1/1502296519_model_val_F2_0.774480_050.hdf5'
+MODEL_URL_LATEST = 'https://github.com/alexklibisz/deep-calcium/releases/download/v0.0.1-weights/unet1d_model.hdf5'
 
 
 class _SamplePlotCallback(Callback):
@@ -135,7 +135,7 @@ def unet1d(window_shape=(128,), nb_filters_base=32, conv_kernel_init='he_normal'
     x = conv_layer(nfb, x)
 
     x = Conv1D(2, 1)(x)
-    x = MaxPooling1D(margin+1, strides=1, padding='same')(x)
+    x = MaxPooling1D(margin + 1, strides=1, padding='same')(x)
     x = Activation('softmax')(x)
 
     #x = Lambda(lambda x: x[:, :, 1:])(x)
