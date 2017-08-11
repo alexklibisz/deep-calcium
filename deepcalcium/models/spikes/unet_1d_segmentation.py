@@ -6,6 +6,7 @@ from keras.optimizers import SGD, Adam
 from keras.losses import binary_crossentropy
 from math import ceil
 from os import path, mkdir
+from skimage.morphology import local_maxima
 from time import time
 import h5py
 import keras.backend as K
@@ -419,7 +420,28 @@ class UNet1DSegmentation(object):
                 yield tb, sb
 
     def predict(self, dataset_paths, model_path, batch=32, threshold=0.5):
+        """Prediction on new datasets.
 
+        Note: if the model used an error margin > 0, you should do one of the
+        following when comparing to ground-truth segmentation masks.
+        1. Apply the same error margin to the ground-truth masks.
+        2. Take the local max of each "stripe" of pooled predictions as the
+        actual prediction. skimage measure.label and morphology.local_maxima
+        might be helpful for this.
+
+        # Arguments
+            dataset_paths: list of paths to the HDF5 datasets that will be predicted.
+            model_path: path to the serialized model used for predicting.
+            batch: batch size for predictions. Adjust based on GPU.
+            threshold: prediction threshold for rounding. 0.5 is equivalent to
+                just calling .round() on the network outputs.
+
+        # Returns
+            spikes_pred_all: list of spike prediction matrices, one per dataset.
+                Shape is (no. ROIs x length of traces).
+            names_all: the corresponding name for each dataset from its HDF5 file.
+
+        """
         spikes_pred_all = []
         names_all = []
 
@@ -427,7 +449,6 @@ class UNet1DSegmentation(object):
             attrs = self.dataset_attrs_func(p)
             names_all.append(attrs['name'])
             traces = self.dataset_traces_func(p)
-            spikes = self.dataset_spikes_func(p)
             input_shape = (traces.shape[1],)
             model = load_model_with_new_input_shape(
                 model_path, input_shape=input_shape, compile=False)
