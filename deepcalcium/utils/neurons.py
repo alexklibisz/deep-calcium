@@ -1,6 +1,7 @@
 from __future__ import division
 from scipy.misc import imsave
 from skimage.color import gray2rgb, rgb2gray
+from sklearn.cluster import KMeans
 from regional import one
 import keras.backend as K
 import numpy as np
@@ -225,3 +226,26 @@ def mask_outlines(img, mask_arrs=[], colors=[]):
     mrg = (((oln_rgb * oln_msk) + (img_rgb * img_msk)) * 255).astype(np.uint8)
 
     return mrg
+
+def series_kmeans_summary(series, k=8, rng=np.random):
+    """Runs k-means clustering on the given series with k clusters.
+    This can be useful for extracting multiple images representing the
+    variations in a series of images.
+
+    # Arguments
+        series: numpy array with shape (no. images, height, width)
+        k: number of clusters to use in k-means clustering.
+
+    # Returns
+        centroids: numpy array with shape (k, height, width) containing
+            the k cluster centroids. These are images ready to be used
+            for plotting or further processing.
+
+    """
+
+    t, h, w = series.shape
+    km = KMeans(n_clusters=k, random_state=rng, n_jobs=-2)
+    X = series.reshape(t, h * w)
+    km.fit(X)
+    centroids = km.cluster_centers_.reshape((k, h, w))
+    return centroids

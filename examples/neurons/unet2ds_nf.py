@@ -3,17 +3,22 @@ from time import time
 import argparse
 import logging
 import numpy as np
+import os
 import tensorflow as tf
 
 import sys
 sys.path.append('.')
 
-from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary
+from deepcalcium.models.neurons.unet_2d_summary import UNet2DSummary, MODEL_URL_LATEST
 from deepcalcium.datasets.nf import nf_load_hdf5, nf_submit
 from deepcalcium.utils.runtime import funcname
 from deepcalcium.utils.config import CHECKPOINTS_DIR, DATASETS_DIR
+from deepcalcium.utils.keras_helpers import download_model
 
 CHECKPOINTS_DIR = '%s/neurons_unet2ds_nf' % CHECKPOINTS_DIR
+os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
+MODEL_PATH = '%s/%s' % (CHECKPOINTS_DIR, MODEL_URL_LATEST.split('/')[-1])
+download_model(MODEL_URL_LATEST, MODEL_PATH)
 
 np.random.seed(865)
 tf.set_random_seed(7535)
@@ -115,8 +120,7 @@ if __name__ == "__main__":
     sp_eva.set_defaults(which='evaluate')
     sp_eva.add_argument('dataset_name', help='dataset name',
                         default='all_train', type=str)
-    sp_eva.add_argument('-m', '--model_path',
-                        help='path to model', required=True)
+    sp_eva.add_argument('-m', '--model_path', help='path to model', default=MODEL_PATH)
     sp_eva.add_argument('-c', '--checkpoints_dir',
                         help='checkpoint directory', default=CHECKPOINTS_DIR)
 
@@ -125,8 +129,7 @@ if __name__ == "__main__":
     sp_prd.set_defaults(which='predict')
     sp_prd.add_argument('dataset_name', help='dataset name',
                         default='all', type=str)
-    sp_prd.add_argument('-m', '--model_path',
-                        help='path to model', required=True)
+    sp_prd.add_argument('-m', '--model_path', help='path to model', default=MODEL_PATH)
     sp_prd.add_argument('-c', '--checkpoints_dir',
                         help='checkpoint directory', default=CHECKPOINTS_DIR)
 
