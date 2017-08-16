@@ -27,8 +27,12 @@ def get_config():
         config = json.load(fp)
         fp.close()
 
-    os.makedirs(config['datasets_dir'], exist_ok=True)
-    os.makedirs(config['checkpoints_dir'], exist_ok=True)
+    if not os.path.exists(config['datasets_dir']):
+        os.makedirs(config['datasets_dir'])
+
+    if not os.path.exists(config['checkpoints_dir']):
+        os.makedirs(config['checkpoints_dir'])
+        
     return config
 
 
