@@ -31,7 +31,7 @@ def scaffold():
 
     return checkpoints_dir, datasets_dir
 
-def cross_validate(dataset_names, checkpoints_dir):
+def train(dataset_names, checkpoints_dir):
     """Cross-validate on all neurofinder datasets"""
 
     # Default model.
@@ -39,7 +39,7 @@ def cross_validate(dataset_names, checkpoints_dir):
         checkpoints_dir=checkpoints_dir,
         model='unet',
         series_summary='kmeans',
-        masks_summary='max_erode',
+        masks_summary='max_erosion',
         fit_shape=(8, 128, 128),
         fit_iters=10e3,
         fit_batch=20,
@@ -77,7 +77,7 @@ def predict(dataset_names, checkpoints_dir, model_path=None):
 
 if __name__ == "__main__":
 
-    checkpoints_dir, datasets_dir, model_path = scaffold()
+    checkpoints_dir, datasets_dir = scaffold()
 
     # Command line argument parser.
     ap = argparse.ArgumentParser(description='CLI for neurofinder segmentation')
@@ -87,8 +87,7 @@ if __name__ == "__main__":
     sp_trn = sp.add_parser('crossval', help='cross-validation')
     sp_trn.set_defaults(which='crossval')
     sp_trn.add_argument('dataset_name', help='dataset name(s)', type=str,
-                        default=','.join(NEUROFINDER_NAMES),
-                        default=NEUROFINDER_NAMES)
+                        default=','.join(NEUROFINDER_NAMES))
     sp_trn.add_argument('-m', '--model_path', help='path to model')
     sp_trn.add_argument('-c', '--checkpoints_dir', help='checkpoint directory',
                         default=checkpoints_dir)
@@ -97,8 +96,7 @@ if __name__ == "__main__":
     sp_prd = sp.add_parser('predict', help='prediction')
     sp_prd.set_defaults(which='predict')
     sp_prd.add_argument('dataset_name', help='dataset name(s)', type=str,
-                        default=','.join(NEUROFINDER_NAMES),
-                        default=NEUROFINDER_NAMES)
+                        default=','.join(NEUROFINDER_NAMES))
     sp_prd.add_argument('-m', '--model_path', help='path to model',
                         default=model_path)
     sp_prd.add_argument('-c', '--checkpoints_dir', help='checkpoint directory',
@@ -106,7 +104,7 @@ if __name__ == "__main__":
 
     # Map args['which'] -> function
     which_func = {
-        'crossval': cross_validate,
+        'train': train,
         'predict': predict
     }
 

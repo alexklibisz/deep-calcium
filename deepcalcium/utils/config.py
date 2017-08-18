@@ -32,7 +32,7 @@ def get_config():
 
     if not os.path.exists(config['checkpoints_dir']):
         os.makedirs(config['checkpoints_dir'])
-        
+
     return config
 
 
