@@ -9,104 +9,114 @@ import tensorflow as tf
 import sys
 sys.path.append('.')
 
-from deepcalcium.models.neurons import NeuronSegmentation
-from deepcalcium.datasets.neurofinder_helpers import neurofinder_load_hdf5, NEUROFINDER_NAMES
+from deepcalcium.models.neurons.neuron_segmentation import NeuronSegmentation, \
+    summary_series_kmeans, summary_masks_max_erosion, augmentation_kmeans
+from deepcalcium.datasets.neurofinder_helpers import neurofinder_load_hdf5, \
+    NEUROFINDER_NAMES_ALL, NEUROFINDER_NAMES_TRAIN, NEUROFINDER_NAMES_TEST
 from deepcalcium.utils.runtime import funcname
+from deepcalcium.models.networks import unet2d
 from deepcalcium.utils.config import CHECKPOINTS_DIR, DATASETS_DIR
 
 np.random.seed(865)
 tf.set_random_seed(7535)
 logging.basicConfig(level=logging.INFO)
 
-def scaffold():
-    """Make checkpoints and datasets directories for this particular model."""
-
-    checkpoints_dir = '%s/neurons/unet_neurofinder' % CHECKPOINTS_DIR
-    if not os.path.exists(checkpoints_dir):
-        os.makedirs(checkpoints_dir)
-
-    datasets_dir = '%s/neurons/unet_neurofinder' % DATASETS_DIR
-    if not os.path.exists(datasets_dir):
-        os.makedirs(datasets_dir)
-
-    return checkpoints_dir, datasets_dir
-
-def train(dataset_names, checkpoints_dir):
-    """Cross-validate on all neurofinder datasets"""
-
-    # Default model.
-    model = NeuronSegmentation(
-        checkpoints_dir=checkpoints_dir,
-        model='unet',
-        series_summary='kmeans',
-        masks_summary='max_erosion',
-        fit_shape=(8, 128, 128),
-        fit_iters=10e3,
-        fit_batch=20,
-        fit_valdiation_metrics='neurofinder',
-        fit_validation_interval=1000,
-        fit_validation_folds=5,
-        fit_objective='binary_crossentropy',
-        fit_optimizer='adam',
-        fit_optimizer_parameters={'lr': 0.002},
-        fit_parallelize=True
-    )
+def cross_validate(dataset_names, checkpoints_dir):
+    """Leave-one-out cross-validation on neurofinder datasets."""
 
     # HDF5 paths to all series and masks.
-    dataset_hdf5_paths = neurofinder_load_hdf5(dataset_names, n_jobs=-2)
+    dataset_hdf5_paths = neurofinder_load_hdf5(dataset_names)
 
-    # Cross-validate.
-    model.cross_validate(dataset_hdf5_paths)
+    # Split datasets for cross-validation.
+    folds = len(dataset_hdf5_paths)
+    import pdb; pdb.set_trace()
+
+    rng.shuffle(dataset_hdf5_paths)
+    split = int(0.8 * len(dataset_hdf5_paths))
+    dataset_hdf5_paths_train = dataset_hdf5_paths[:split]
+    dataset_hdf5_paths_validate = dataset_hdf5_paths[split:]
+
+def train(dataset_names, checkpoints_dir):
+    """Train and validate on neurofinder datasets."""
+
+    # HDF5 paths to all series and masks.
+    dataset_hdf5_paths = neurofinder_load_hdf5(dataset_names)
+
+    # Split data 80/20.
+    np.random.shuffle(dataset_hdf5_paths)
+    split = int(0.8 * len(dataset_hdf5_paths))
+    dataset_hdf5_paths_train = dataset_hdf5_paths[:split]
+    dataset_hdf5_paths_validate = dataset_hdf5_paths[split:]
+
+    # Model set up with kmeans clustered summaries.
+    k = 8
+    model = NeuronSegmentation(
+        checkpoints_dir=checkpoints_dir,
+        network_func=unet2d,
+        series_summary_func=lambda path: summary_series_kmeans(path, k),
+        masks_summary_func=summary_masks_max_erosion,
+        fit_shape=(128, 128, k),
+        fit_augmentation_func=augmentation_kmeans
+    )
+
+    # Train.
+    model.fit(dataset_hdf5_paths_train, dataset_hdf5_paths_validate)
 
 def predict(dataset_names, checkpoints_dir, model_path=None):
     """Predictions on given datasets."""
 
-    logger = logging.getLogger(funcname())
+    dataset_hdf5_paths = neurofinder_load_hdf5(dataset_names)
+    k = 8
     model = NeuronSegmentation(
         checkpoints_dir=checkpoints_dir,
-        series_summary='kmeans',
-        predict_shape=(8, 512, 512),
-        predict_augmentation=True,
-        predict_threshold=0.5,
-        predict_print_metrics=True,
-        predict_save=True,
         model_path=model_path,
+        network_func=unet2d,
+        series_summary_func=lambda path: summary_series_kmeans(path, k),
+        masks_summary_func=summary_masks_max_erosion,
+        predict_shape=(512, 512, k),
+        fit_augmentation_func=augmentation_kmeans
     )
-    dataset_hdf5_paths = neurofinder_load_hdf5(dataset_names)
     masks_predicted = model.predict(dataset_hdf5_paths)
 
 if __name__ == "__main__":
 
-    checkpoints_dir, datasets_dir = scaffold()
+    # Make checkpoints directory for this particular model.
+    checkpoints_dir = '%s/neurons/neurofinder' % CHECKPOINTS_DIR
+    if not os.path.exists(checkpoints_dir):
+        os.makedirs(checkpoints_dir)
 
     # Command line argument parser.
     ap = argparse.ArgumentParser(description='CLI for neurofinder segmentation')
     sp = ap.add_subparsers(title='actions', description='Choose an action')
 
     # Training CLI.
-    sp_trn = sp.add_parser('crossval', help='cross-validation')
-    sp_trn.set_defaults(which='crossval')
-    sp_trn.add_argument('dataset_name', help='dataset name(s)', type=str,
-                        default=','.join(NEUROFINDER_NAMES))
-    sp_trn.add_argument('-m', '--model_path', help='path to model')
-    sp_trn.add_argument('-c', '--checkpoints_dir', help='checkpoint directory',
-                        default=checkpoints_dir)
+    x = sp.add_parser('train', help='training')
+    x.set_defaults(which='train')
+    x.add_argument('-d', '--dataset_names', help='dataset name(s)', type=str,
+                   default=','.join(NEUROFINDER_NAMES_TRAIN))
+    x.add_argument('-c', '--checkpoints_dir', help='checkpoint directory',
+                   default=checkpoints_dir)
+
+    # Cross-validation CLI.
+    x = sp.add_parser('crossval', help='cross validation')
+    x.set_defaults(which='crossval')
+    x.add_argument('-d', '--dataset_names', help='dataset name(s)', type=str,
+                   default=','.join(NEUROFINDER_NAMES_TRAIN))
+    x.add_argument('-c', '--checkpoints_dir', help='checkpoint directory',
+                   default=checkpoints_dir)
 
     # Prediction CLI.
-    sp_prd = sp.add_parser('predict', help='prediction')
-    sp_prd.set_defaults(which='predict')
-    sp_prd.add_argument('dataset_name', help='dataset name(s)', type=str,
-                        default=','.join(NEUROFINDER_NAMES))
-    sp_prd.add_argument('-m', '--model_path', help='path to model',
-                        default=model_path)
-    sp_prd.add_argument('-c', '--checkpoints_dir', help='checkpoint directory',
-                        default=checkpoints_dir)
+    x = sp.add_parser('predict', help='prediction')
+    x.set_defaults(which='predict')
+    x.add_argument('-d', '--dataset_names', help='dataset name(s)', type=str,
+                   default=','.join(NEUROFINDER_NAMES_ALL))
+    x.add_argument('-m', '--model_path', help='path to model', default=None)
+    x.add_argument('-c', '--checkpoints_dir', help='checkpoint directory',
+                   default=checkpoints_dir)
 
     # Map args['which'] -> function
-    which_func = {
-        'train': train,
-        'predict': predict
-    }
+    which_func = { 'train': train, 'predict': predict,
+                   'crossval': cross_validate }
 
     # Parse and run appropriate function.
     args = vars(ap.parse_args())

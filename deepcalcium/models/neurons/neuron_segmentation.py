@@ -1,44 +1,110 @@
+from tifffile import imread
+from tqdm import tqdm
+import h5py
+import logging
 import numpy as np
 import types
+import os
 
 from deepcalcium.models.networks import unet2d
+from deepcalcium.utils.config import CHECKPOINTS_DIR
+from deepcalcium.utils.runtime import funcname
 
-def neurons_make_hdf5(tiff_paths, masks_array, hdf5_path):
-    """Create an HDF5 file for neuron segmentation.
+def make_neurons_hdf5(img_paths, msks, hdf5_path):
+    """Create an HDF5 file for neuron segmentation. The file is considered to
+    be created if it contains an attribute 'img_paths' which is a comma-separated
+    string of the img_paths list. This attribute is added after populating
+    the images and masks.
+
+    The HDF5 format simply contains two datasets:
+    - 'imgs': an int16 array with shape (no. images, height, width) containing
+        the images read from the given img_paths list.
+    - 'msks': a uint8 array with shape (no. masks, height, width) containing
+        the masks passed as an argument.
 
     # Arguments
-        tiff_paths: list of paths to the TIFF images in the series. This assumes
-            they are sorted in the correct order.
-
-        masks_array: numpy array of individual neuron masks with shape
+        img_paths: list of paths to the images in the series.
+        msks: numpy array of individual neuron masks with shape
             (no. masks, height width).
-
         hdf5_path: path where the hdf5 file is stored.
 
     # Returns
-        dataset_path: the path where the hdf5 file was stored.
+        hdf5_path: the path where the hdf5 file was stored.
+
+    """
+
+    logger = logging.getLogger(funcname())
+    img_paths = sorted(img_paths)
+    img_paths_attr = ','.join(img_paths)
+
+    # If the file already exists and has an attribute containing the img paths,
+    # then it has already been populated and the path is returned.
+    if os.path.exists(hdf5_path):
+        fp = h5py.File(hdf5_path, 'r')
+        a = dict(fp.attrs)
+        fp.close()
+        if 'img_paths' in a and a['img_paths'] == img_paths_attr:
+            logger.info('File already exists and is populated: %s' % (hdf5_path))
+            return hdf5_path
+        else:
+            os.remove(hdf5_path)
+
+    # Create the file.
+    fp = h5py.File(hdf5_path, 'w')
+
+    # Populate images.
+    logger.info('Populating images')
+    shape = (len(img_paths), *msks.shape[1:])
+    imgs_ds = fp.create_dataset('imgs', shape, dtype='int16')
+    for i in tqdm(range(len(img_paths))):
+        imgs_ds[i,:,:] = imread(img_paths[i])
+
+    # Populate the masks.
+    msks_ds = fp.create_dataset('msks', msks.shape, dtype='int8')
+    msks_ds[...] = msks
+
+    # Add img paths attribute.
+    fp.attrs['img_paths'] = img_paths_attr
+    fp.close()
+
+    return hdf5_path
+
+def summary_series_mean(hdf5_path):
+    return
+
+def summary_series_kmeans(hdf5_path, k):
+    return
+
+def masks_summary_max(hdf5_path):
+    return
+
+def summary_masks_max_erosion(hdf5_path):
+    return
+
+def augmentation_mean(series_summary, masks_summary):
+    """Applies augmentations for mean-summarized series.
+    # Arguments
+        series_summary: summarized series as a numpy array with shape (h, w).
+        masks_summary: summarized mask as a numpy array with shape (h, w).
+    # Returns
+        series_summarized_batch: batch of augmented series summaries containing
+            k * 8 summaries. numpy array with shape (8, h, w, k).
+        masks_summarized_batch: batch of augmented mask summaries. numpy array
+            with shape (8, h, w).
 
     """
     return
 
-def series_sumary_mean(hdf5_path, shape=None):
-    return
-
-def series_summary_kmeans(hdf5_path, shape=None):
-    return
-
-def masks_summary_max(hdf5_path, shape=None):
-    return
-
-def masks_summary_max_erosion(hdf5_path, shape=None):
-    return
-
-def augment_summaries(series_summary, masks_summary, flip_rotate=True, shuffle_channels=True):
-    """Applies augmentation to the given summaries.
-
+def augmentation_kmeans(series_summary, masks_summary):
+    """Applies augmentation for kmeans-summarized series.
     # Arguments
-        series_summary: numpy array 
-
+        series_summary: summarized series as a numpy array with shape (h, w, k).
+        masks_summary: summarized mask as a numpy array with shape (h, w).
+    # Returns
+        series_summarized_batch: batch of augmented series summaries containing
+            k * 8 summaries. numpy array with shape (k * 8, h, w, k).
+        masks_summarized_batch: batch of augmented mask summaries. numpy array
+            with shape (k * 8, h, w).
     """
     return
 
@@ -67,137 +133,50 @@ class NeuronSegmentation(object):
     it easy to test different combinations of hyper-parameters.
 
     # Arguments
-        network_type: {'unet2d'}
-            Model used for segmentation. Defaults to 'unet2d'.
-            'unet2d': modified version of U-Net. See https://arxiv.org/abs/1707.06314.
-        network_path: file system path to a pre-trained keras model and architecture.
-        model_architectures: dictionary mapping the network_type to a function that
-            instantiates the keras model. This can be useful for trying different
-            hyper-parameters.
-        series_summary_type: {'kmeans', 'mean'}
-            Method for summarizing the image series, defaults to 'kmeans'.
-            'kmeans': runs k-means clustering on the image series and uses the
-                resulting centroids as k representative images for the series.
-                k is determined by the fit_shape and predict_shape arguments.
-                When fitting the model, the k centroids are treated as an
-                image with k channels, and the channels can occur in any order.
-            'mean': computes the mean summary image and uses it as a single
-                channel input image.
-        masks_summary_type: {'max_erosion', 'max'}
-            Method for summarizing the neuron masks, defaults to 'max_erosion'.
-            'max_erosion': computes the max summary of the neuron masks and
-                applies erosion to each neuron to eliminate overlapping pixels
-                and preserve the original number of neurons. This is motivated
-                by the fact that the neurofinder metrics penalize for
-                non-separated neurons.
-            'max': computes the max summary of the neuron masks. This will
-                leave overlapping neurons.
-        fit_shape: Tuple defining the input/output shape for fitting the model.
-            For series_summary 'kmeans', a 3-element tuple is expected with
-            format (k, height, width). For series_summary 'mean', a 2-element
-            tuple is expected with format (height, width).
-        fit_iters: total number of iterations (i.e. gradient updates) for fitting.
-        fit_batch: batch size for fitting.
-        fit_augmentation: boolean specifying whether to apply augmentations to the
-            training data.
-        fit_validation_metrics: {'neurofinder', 'keras'}
-            Metrics used to score validation data.
-            'neurofinder': uses the neurofinder implementation of precision,
-                recall, and F1 implemented in https://github.com/codeneuro/neurofinder-python
-            'keras': uses the kers pixelwise metrics that are used for training.
-        fit_validation_interval: number of gradient updates to compute before
-            computing validation metrics. (aka number of updates in one "epoch").
-        fit_objective: keras-compatible objective function or string function name.
-        fit_optimizer: keras-compatible optimizer class or string optimizer name.
-        fit_optimizer_arguments: dictionary of arguments passed to the optimizer.
-        predict_shape: Tuple defining the input/output shape for predictions.
-            Same semantics as fit_shape. If the given shape is larger than
-            the series being predicted, the series will be padded to fit
-            and then cropped.
-        predict_augmentation: boolean specifying whether to apply test-time
-            augmentation. For series_summary 'mean', this consists of averaging
-            eight flips and rotations. For series_summary 'kmeans', k random
-            permutations of the channels are averaged in addition to the eight
-            flips and rotations.
-        predict_threshold: decimal threshold used to round predictions to
-            create the final binary mask that gets returned.
-        predict_print_metrics: boolean specifying whether to compute and print
-            metrics when making predictions. This is only done if the ground-truth
-            mask is included in the HDF5 datasets.
-        predict_save: boolean specifying whether to save the predictions. If
-            True, the predicted neurons are outlined on the mean summary image.
-            If the ground-truth neurons are included in the HDF5 dataset, they
-            are also outlined on the image.
+        TODO
+    # Returns
+        TODO
+
     """
     def __init__(self,
-                 network_type='unet2d',
-                 network_path=None,
-                 model_architectures={'unet2d': unet2d},
-                 series_summary_type='kmeans',
-                 masks_summary_type='max_erode',
-                 cached_summaries=True,
-                 fit_shape=(8, 128, 128),
+                 checkpoints_dir='%s/tmp' % CHECKPOINTS_DIR,
+                 network_func=unet2d,
+                 series_summary_func=lambda p: series_summary_kmeans(p, 8),
+                 masks_summary_func=summary_masks_max_erosion,
+                 fit_shape=(128, 128, 8),
+                 fit_augmentation_func=augmentation_kmeans,
                  fit_iters=10000,
                  fit_batch=20,
-                 fit_augmentation=True,
-                 fit_validation_metrics='neurofinder',
                  fit_validation_interval=1000,
                  fit_objective='binary_crossentropy',
                  fit_optimizer='adam',
                  fit_optimizer_arguments={'lr': 0.002},
                  predict_shape=(8, 512, 512),
-                 predict_augmentation=True,
+                 predict_augmentation_func=augmentation_kmeans,
                  predict_threshold=0.5,
-                 predict_print_metrics=True,
+                 predict_verbose=True,
                  predict_save=True,
                  random_state=np.random):
 
-        self.network_type = network_type
-        self.network_path = network_path
-        self.series_summary_type = series_summary_type
-        self.masks_summary_type = masks_summary_type
-        self.cached_summaries = cached_summaries
+        self.checkpoints_dir = checkpoints_dir
+        self.network_func = network_func
+        self.series_summary_func = series_summary_func
+        self.masks_summary_func = masks_summary_func
+        self.fit_shape = fit_shape
+        self.fit_augmentation_func = fit_augmentation_func
         self.fit_shape = fit_shape
         self.fit_iters = fit_iters
         self.fit_batch = fit_batch
-        self.fit_validation_metrics = fit_validation_metrics
         self.fit_validation_interval = fit_validation_interval
         self.fit_objective = fit_objective
         self.fit_optimizer = fit_optimizer
         self.fit_optimizer_arguments = fit_optimizer_arguments
         self.predict_shape = predict_shape
-        self.predict_augmentation = predict_augmentation
+        self.predict_augmentation_func = predict_augmentation_func
         self.predict_threshold = predict_threshold
-        self.predict_print_metrics = predict_print_metrics
+        self.predict_verbose = predict_verbose
         self.predict_save = predict_save
         self.random_state = random_state
-
-        # Error checking.
-        assert self.network_type in {'unet2d'} \
-               or isinstance(self.network_type, types.FunctionType)
-        assert os.path.exists(self.network_path) or self.network_path == None
-        assert self.series_summary_type in {'kmeans', 'mean'}
-        assert self.masks_summary_type in {'max', 'max_erode'}
-        x = self.series_summary_type == 'kmeans'
-        assert (x and len(self.fit_shape) == 3) or not x
-        assert (x and len(self.predict_shape) == 3) or not x
-        assert (x and self.fit_shape[0] == self.predict_shape[0]) or not x
-        x = self.series_summary_type == 'mean'
-        assert (x and len(self.fit_shape) == 2) or not x
-        assert (x and len(self.predict_shape) == 2) or not x
-        assert len(self.fit_shape) in {2,3}
-        assert len(self.predict_shape) in {2,3}
-        assert self.fit_objective in {'binary_crossentropy'}
-        assert self.fit_optimizer in {'sgd', 'adam'}
-        assert 0. <= self.predict_threshold <= 1.
-
-        # Setup summary functions.
-        fmap = {'kmeans': series_summary_kmeans,
-                'mean': series_summary_mean,
-                'max': masks_summary_max,
-                'max_erosion': masks_summary_max_erosion}
-        self._series_summary = fmap[self.series_summary_type]
-        self._masks_summary = fmap[self.masks_summary_type]
 
     def fit(self, hdf5_paths_train, hdf5_paths_validate):
         """Fit the model with the given training and validation data.
@@ -209,19 +188,22 @@ class NeuronSegmentation(object):
         """
 
         # Summarize datasets.
-        series_summaries_trn = [self._series_summary(p, self.fit_shape) for p in hdf5_paths_train]
-        series_summaries_val = [self._series_summary(p, self.fit_shape) for p in hdf5_paths_validate]
-        masks_summaries_trn = [self._masks_summary(p, self.fit_shape) for p in hdf5_paths_train]
-        masks_summaries_val = [self._masks_summary(p, self.fit_shape) for p in hdf5_paths_validate]
+        series_summaries_trn = [self.series_summary_func(p) for p in hdf5_paths_train]
+        series_summaries_val = [self.series_summary_func(p) for p in hdf5_paths_validate]
+        masks_summaries_trn = [self.masks_summary_func(p) for p in hdf5_paths_train]
+        masks_summaries_val = [self.masks_summary_func(p) for p in hdf5_paths_validate]
 
-        # Setup the training generator.
+        import pdb; pdb.set_trace()
+
+        # Setup the training and validation generator.
         batch_gen_trn = self._batch_generator(series_summaries_trn, masks_summaries_trn)
+        batch_gen_val = self._batch_generator(series_summaries_val, masks_summaries_val)
 
         # Setup the validation callback, which makes full-image predictions.
         valcb = ValidationCallback(series_summaries_val, masks_summaries_val, self.fit_augmentation)
 
         # Setup remaining callbacks.
-        callbacks = [ valcb, ]
+        callbacks = [ valcb ]
 
         # Setup the network and fit.
         model = self._get_network(self.fit_shape)

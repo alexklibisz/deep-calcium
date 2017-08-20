@@ -1,1 +1,1 @@
-from .neuron_segmentation import NeuronSegmentation
+from .neuron_segmentation import *
