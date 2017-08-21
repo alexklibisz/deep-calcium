@@ -1,4 +1,8 @@
+from hashlib import md5
+from scipy.misc import imresize
+from sklearn.cluster import KMeans
 from tifffile import imread
+from time import time
 from tqdm import tqdm
 import h5py
 import logging
@@ -35,19 +39,20 @@ def make_neurons_hdf5(img_paths, msks, hdf5_path):
 
     logger = logging.getLogger(funcname())
     img_paths = sorted(img_paths)
-    img_paths_attr = ','.join(img_paths)
+    imgs_hash = md5(str(img_paths).encode()).hexdigest()
+    msks_hash = md5(msks).hexdigest()
 
     # If the file already exists and has an attribute containing the img paths,
     # then it has already been populated and the path is returned.
     if os.path.exists(hdf5_path):
-        fp = h5py.File(hdf5_path, 'r')
+        fp = h5py.File(hdf5_path)
         a = dict(fp.attrs)
         fp.close()
-        if 'img_paths' in a and a['img_paths'] == img_paths_attr:
+        # print(imgs_hash, a['imgs_hash'] if 'imgs_hash' in a else '--')
+        # print(msks_hash, a['msks_hash'] if 'msks_hash' in a else '--')
+        if 'imgs_hash' in a and a['imgs_hash'] == imgs_hash and 'msks_hash' in a and a['msks_hash'] == msks_hash:
             logger.info('File already exists and is populated: %s' % (hdf5_path))
             return hdf5_path
-        else:
-            os.remove(hdf5_path)
 
     # Create the file.
     fp = h5py.File(hdf5_path, 'w')
@@ -55,31 +60,139 @@ def make_neurons_hdf5(img_paths, msks, hdf5_path):
     # Populate images.
     logger.info('Populating images')
     shape = (len(img_paths), *msks.shape[1:])
-    imgs_ds = fp.create_dataset('imgs', shape, dtype='int16')
+    imgs_ds = fp.create_dataset('imgs/raw', shape, dtype='int16')
     for i in tqdm(range(len(img_paths))):
         imgs_ds[i,:,:] = imread(img_paths[i])
 
     # Populate the masks.
-    msks_ds = fp.create_dataset('msks', msks.shape, dtype='int8')
+    msks_ds = fp.create_dataset('msks/raw', msks.shape, dtype='int8')
     msks_ds[...] = msks
 
-    # Add img paths attribute.
-    fp.attrs['img_paths'] = img_paths_attr
+    # Add hash attributes.
+    fp.attrs['imgs_hash'] = imgs_hash
+    fp.attrs['msks_hash'] = msks_hash
     fp.close()
 
     return hdf5_path
 
-def summary_series_mean(hdf5_path):
-    return
+def summary_imgs_mean(hdf5_path):
+    return 0
 
-def summary_series_kmeans(hdf5_path, k):
-    return
+def summary_imgs_kmeans(hdf5_path, k, shape=None):
+    """Computes series s
 
-def masks_summary_max(hdf5_path):
-    return
+    """
 
-def summary_masks_max_erosion(hdf5_path):
-    return
+    logger = logging.getLogger(funcname())
+    fp = h5py.File(hdf5_path)
+    assert 'imgs/raw' in fp
+    imgs = fp.get('imgs/raw')[...]
+    summary_key = 'imgs/kmeans_%d_%d_%d_%s' % (k, shape[0], shape[1], md5(imgs).hexdigest())
+
+    # Check if summary has already been computed and stored.
+    if summary_key in fp:
+        summary = fp.get(summary_key)[...]
+        fp.close()
+        return summary
+    else:
+        fp.close()
+
+    # Resize the images for more efficient clustering.
+    if shape is not None:
+        x = np.array([imresize(img, shape) for img in imgs])
+    else:
+        x = imgs
+
+    # Cluster the images which may have been resized.
+    n, h, w = x.shape
+    km = KMeans(k, n_jobs=1)
+    km.fit(x.reshape(n, h * w))
+
+    # Use the cluster labels to compute centroids from the full-size images.
+    summary = np.zeros((k, *imgs.shape[1:]))
+    for i in range(np.max(km.labels_)):
+        xx = np.where(km.labels_ == i)
+        summary[i] = np.mean(imgs[xx], axis=0)
+
+    # import matplotlib.pyplot as plt
+    # fig, _ = plt.subplots(4, 2)
+    # for i,ax in enumerate(fig.axes):
+    #     ax.imshow(summary[i], cmap='gray')
+    # plt.show()
+
+    # Store and return the summary.
+    fp = h5py.File(hdf5_path, 'r+')
+    summary_ds = fp.create_dataset(summary_key, summary.shape, dtype='float32')
+    summary_ds[...] = summary
+    fp.close()
+    return summary
+
+def summary_msks_max(hdf5_path):
+    return 0
+
+def summary_msks_max_erosion(hdf5_path):
+    """Flattens the stack of neuron masks into a (height x width) combined mask.
+    Eliminates overlapping and neighboring pixels that belong to different
+    neurons to preserve the original number of independent neurons. The summary
+    is saved in the HDF5 file with a key including the md5 hash of the masks.
+
+    # Arguments
+        hdf5_path: path to the HDF5 file where the masks are stored.
+    # Returns
+        summary: 2D binary segmentation mask, shape (height, width).
+
+    """
+
+    fp = h5py.File(hdf5_path)
+    assert 'msks/raw' in fp
+    msks = fp.get('msks/raw')[...]
+    summary_key = 'msks/max_erosion_%s' % md5(msks).hexdigest()
+
+    # Check if summary has already been computed and stored.
+    if summary_key in fp:
+        summary = fp.get(summary_key)[...]
+        fp.close()
+        return summary
+    else:
+        fp.close()
+
+    # Coordinates of all 1s in the stack of masks.
+    zyx = list(zip(*np.where(msks == 1)))
+
+    # Mapping (y,x) -> z.
+    yx_z = {(y, x): [] for z, y, x in zyx}
+    for z, y, x in zyx:
+        yx_z[(y, x)].append(z)
+
+    # Remove all elements with > 1 z.
+    for k in list(yx_z.keys()):
+        if len(yx_z[k]) > 1:
+            del yx_z[k]
+    assert np.max([len(v) for v in yx_z.values()]) == 1.
+
+    # For (y,x), take the union of its z-values with its immediate neighbors' z-values.
+    # Delete the (y,x) and its neighbors if |union| > 1.
+    for y, x in list(yx_z.keys()):
+        nbrs = [(y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1), (y + 1, x + 1),
+                (y - 1, x - 1), (y + 1, x - 1), (y - 1, x + 1)] + [(y, x)]
+        nbrs = [k for k in nbrs if k in yx_z]
+        allz = [yx_z[k][0] for k in nbrs]
+        if len(np.unique(allz)) > 1:
+            for k in nbrs:
+                del yx_z[k]
+
+    # The mask consists of the remaining (y,x) keys.
+    yy, xx = [y for y, x in yx_z.keys()], [x for y, x in yx_z.keys()]
+    summary = np.zeros(msks.shape[1:])
+    summary[yy, xx] = 1.
+
+    # Store and return summary.
+    fp = h5py.File(hdf5_path, 'r+')
+    summary_ds = fp.create_dataset(summary_key, summary.shape, dtype='int8')
+    summary_ds[...] = summary
+    fp.close()
+    return summary
+
 
 def augmentation_mean(series_summary, masks_summary):
     """Applies augmentations for mean-summarized series.
@@ -141,8 +254,8 @@ class NeuronSegmentation(object):
     def __init__(self,
                  checkpoints_dir='%s/tmp' % CHECKPOINTS_DIR,
                  network_func=unet2d,
-                 series_summary_func=lambda p: series_summary_kmeans(p, 8),
-                 masks_summary_func=summary_masks_max_erosion,
+                 imgs_summary_func=lambda p: imgs_summary_kmeans(p, 8),
+                 msks_summary_func=summary_msks_max_erosion,
                  fit_shape=(128, 128, 8),
                  fit_augmentation_func=augmentation_kmeans,
                  fit_iters=10000,
@@ -160,8 +273,8 @@ class NeuronSegmentation(object):
 
         self.checkpoints_dir = checkpoints_dir
         self.network_func = network_func
-        self.series_summary_func = series_summary_func
-        self.masks_summary_func = masks_summary_func
+        self.imgs_summary_func = imgs_summary_func
+        self.msks_summary_func = msks_summary_func
         self.fit_shape = fit_shape
         self.fit_augmentation_func = fit_augmentation_func
         self.fit_shape = fit_shape
@@ -185,15 +298,27 @@ class NeuronSegmentation(object):
             hdf5_paths_train: paths to the hdf5 files used for training.
             hdf5_paths_validate: paths to the hdf5 files used for validation.
 
+        # Returns
+            TODO
+
         """
 
-        # Summarize datasets.
-        series_summaries_trn = [self.series_summary_func(p) for p in hdf5_paths_train]
-        series_summaries_val = [self.series_summary_func(p) for p in hdf5_paths_validate]
-        masks_summaries_trn = [self.masks_summary_func(p) for p in hdf5_paths_train]
-        masks_summaries_val = [self.masks_summary_func(p) for p in hdf5_paths_validate]
+        logger = logging.getLogger(funcname())
 
-        import pdb; pdb.set_trace()
+        # Summarize series and masks.
+        logger.info('Computing summaries for training data')
+        series_summaries_trn, masks_summaries_trn = [], []
+        for p in tqdm(hdf5_paths_train):
+            series_summaries_trn.append(self.imgs_summary_func(p))
+            masks_summaries_trn.append(self.msks_summary_func(p))
+
+        logger.info('Computing summaries for validation data')
+        series_summaries_val, masks_summaries_val = [], []
+        for p in tqdm(hdf5_paths_validate):
+            series_summaries_trn.append(self.imgs_summary_func(p))
+            masks_summaries_trn.append(self.msks_summary_func(p))
+
+        assert True == False
 
         # Setup the training and validation generator.
         batch_gen_trn = self._batch_generator(series_summaries_trn, masks_summaries_trn)

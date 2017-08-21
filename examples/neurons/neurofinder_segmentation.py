@@ -1,4 +1,5 @@
 # Neurofinder training and prediction using UNet 2D Summary model.
+from sklearn.model_selection import KFold
 from time import time
 import argparse
 import logging
@@ -10,7 +11,7 @@ import sys
 sys.path.append('.')
 
 from deepcalcium.models.neurons.neuron_segmentation import NeuronSegmentation, \
-    summary_series_kmeans, summary_masks_max_erosion, augmentation_kmeans
+    summary_imgs_kmeans, summary_msks_max_erosion, augmentation_kmeans
 from deepcalcium.datasets.neurofinder_helpers import neurofinder_load_hdf5, \
     NEUROFINDER_NAMES_ALL, NEUROFINDER_NAMES_TRAIN, NEUROFINDER_NAMES_TEST
 from deepcalcium.utils.runtime import funcname
@@ -25,58 +26,72 @@ def cross_validate(dataset_names, checkpoints_dir):
     """Leave-one-out cross-validation on neurofinder datasets."""
 
     # HDF5 paths to all series and masks.
-    dataset_hdf5_paths = neurofinder_load_hdf5(dataset_names)
+    hdf5_paths = neurofinder_load_hdf5(dataset_names)
 
-    # Split datasets for cross-validation.
-    folds = len(dataset_hdf5_paths)
-    import pdb; pdb.set_trace()
+    # Split datasets and run cross-validation.
+    histories = []
+    splits = KFold(len(hdf5_paths)).split(hdf5_paths)
+    for idxs_train, idxs_validate in splits:
+        hdf5_paths_train = [hdf5_paths[i] for i in idxs_train]
+        hdf5_paths_validate = [hdf5_paths[i] for i in idxs_validate]
 
-    rng.shuffle(dataset_hdf5_paths)
-    split = int(0.8 * len(dataset_hdf5_paths))
-    dataset_hdf5_paths_train = dataset_hdf5_paths[:split]
-    dataset_hdf5_paths_validate = dataset_hdf5_paths[split:]
+        # Model set up with kmeans clustered summaries.
+        k, shape = 10, (256, 256)
+        model = NeuronSegmentation(
+            checkpoints_dir=checkpoints_dir,
+            network_func=unet2d,
+            imgs_summary_func=lambda p: summary_imgs_kmeans(p, k, shape),
+            msks_summary_func=summary_msks_max_erosion,
+            fit_shape=(128, 128, k),
+            fit_augmentation_func=augmentation_kmeans
+        )
+
+        # Fit and store history.
+        history = model.fit(hdf5_paths_train, hdf5_paths_validate)
+        histories.append(history)
+
 
 def train(dataset_names, checkpoints_dir):
     """Train and validate on neurofinder datasets."""
 
     # HDF5 paths to all series and masks.
-    dataset_hdf5_paths = neurofinder_load_hdf5(dataset_names)
+    hdf5_paths = neurofinder_load_hdf5(dataset_names)
 
     # Split data 80/20.
-    np.random.shuffle(dataset_hdf5_paths)
-    split = int(0.8 * len(dataset_hdf5_paths))
-    dataset_hdf5_paths_train = dataset_hdf5_paths[:split]
-    dataset_hdf5_paths_validate = dataset_hdf5_paths[split:]
+    np.random.shuffle(hdf5_paths)
+    split = int(0.8 * len(hdf5_paths))
+    hdf5_paths_train = hdf5_paths[:split]
+    hdf5_paths_validate = hdf5_paths[split:]
 
     # Model set up with kmeans clustered summaries.
-    k = 8
+    k, shape = 10, (256, 256)
     model = NeuronSegmentation(
         checkpoints_dir=checkpoints_dir,
         network_func=unet2d,
-        series_summary_func=lambda path: summary_series_kmeans(path, k),
-        masks_summary_func=summary_masks_max_erosion,
+        imgs_summary_func=lambda p: summary_imgs_kmeans(p, k, shape),
+        msks_summary_func=summary_msks_max_erosion,
         fit_shape=(128, 128, k),
         fit_augmentation_func=augmentation_kmeans
     )
 
     # Train.
-    model.fit(dataset_hdf5_paths_train, dataset_hdf5_paths_validate)
+    model.fit(hdf5_paths_train, hdf5_paths_validate)
 
 def predict(dataset_names, checkpoints_dir, model_path=None):
     """Predictions on given datasets."""
 
-    dataset_hdf5_paths = neurofinder_load_hdf5(dataset_names)
-    k = 8
+    hdf5_paths = neurofinder_load_hdf5(dataset_names)
+    k, shape = 10, (256, 256)
     model = NeuronSegmentation(
         checkpoints_dir=checkpoints_dir,
         model_path=model_path,
         network_func=unet2d,
-        series_summary_func=lambda path: summary_series_kmeans(path, k),
-        masks_summary_func=summary_masks_max_erosion,
+        imgs_summary_func=lambda p: summary_imgs_kmeans(p, k, shape),
+        msks_summary_func=summary_msks_max_erosion,
         predict_shape=(512, 512, k),
         fit_augmentation_func=augmentation_kmeans
     )
-    masks_predicted = model.predict(dataset_hdf5_paths)
+    msks_predicted = model.predict(hdf5_paths)
 
 if __name__ == "__main__":
 

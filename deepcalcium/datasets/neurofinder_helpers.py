@@ -46,7 +46,7 @@ def neurofinder_load_hdf5(dataset_names=','.join(NEUROFINDER_NAMES_ALL),
     and unzipped to prevent downloading and unzipping again in the future. After the
     dataset is unzipped, the images paths and masks are aggregated and passed to the
     make_neurons_hdf5 function to create the hdf5 file.
-    
+
     # Arguments
         dataset_names: comma-separated string of dataset names.
         datasets_dir: directory where downloaded datasets and created hdf5
